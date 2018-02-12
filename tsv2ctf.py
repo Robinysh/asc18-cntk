@@ -41,7 +41,7 @@ def populate_dicts(files):
                         test_wdcnt[t.lower()] += 1
 
     # add all words that are both in glove and the vocabulary first
-    with open('glove.6B.100d.txt', encoding='utf-8') as f:
+    with open('glove.6B.300d.txt', encoding='utf-8') as f:
         for line in f:
             word = line.split()[0].lower()
             if wdcnt[word] >= 1 or test_wdcnt[word] >= 1: # polymath adds word to dict regardless of word_count_threshold when it's in GloVe

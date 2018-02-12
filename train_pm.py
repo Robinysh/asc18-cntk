@@ -120,6 +120,8 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
         ema_p = C.constant(0, shape=p.shape, dtype=p.dtype, name='ema_%s' % p.uid)
         ema[p.uid] = ema_p
         dummies.append(C.reduce_sum(C.assign(ema_p, 0.999 * ema_p + 0.001 * p)))
+    #print(ema)
+    #print(dummies)
     dummy = C.combine(dummies)
 
     learner = C.adadelta(z.parameters, lr)
@@ -152,16 +154,18 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
     def post_epoch_work(epoch_stat):
         trainer.summarize_training_progress()
         epoch_stat['val_since'] += 1
-
+        print('post epoch work')
         if epoch_stat['val_since'] == training_config['val_interval']:
             epoch_stat['val_since'] = 0
             temp = dict((p.uid, p.value) for p in z.parameters)
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             val_err = validate_model(os.path.join(data_path, training_config['val_data']), model, polymath)
+            print('val err',val_err)
             if epoch_stat['best_val_err'] > val_err:
                 epoch_stat['best_val_err'] = val_err
                 epoch_stat['best_since'] = 0
+                print('saving model')
                 trainer.save_checkpoint(model_file)
                 for p in trainer.model.parameters:
                     p.value = temp[p.uid]
@@ -182,6 +186,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
         epoch_size = training_config['epoch_size']
 
         for epoch in range(max_epochs):
+            print('start again')
             num_seq = 0
             while True:
                 if trainer.total_number_of_samples_seen >= training_config['distributed_after']:
@@ -192,9 +197,12 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
                 trainer.train_minibatch(data)
                 num_seq += trainer.previous_minibatch_sample_count
                 dummy.eval()
+               #print(dummy)
                 if num_seq >= epoch_size:
                     break
-            if not post_epoch_work(epoch_stat):
+            post=post_epoch_work(epoch_stat)
+            print('post epoch return',post)
+            if not post:
                 break
     else:
         if train_data_ext != '.tsv':
@@ -209,6 +217,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
                 if (minibatch_count % C.Communicator.num_workers()) == C.Communicator.rank():
                     trainer.train_minibatch(data) # update model with it
                     dummy.eval()
+                    #print(dummy)
                 minibatch_count += 1
             if not post_epoch_work(epoch_stat):
                 break
@@ -221,6 +230,7 @@ def symbolic_best_span(begin, end):
     return C.layers.Fold(C.element_max, initial_state=C.constant(-1e+30))(running_max_begin + end)
 
 def validate_model(test_data, model, polymath):
+    print('validating model')
     begin_logits = model.outputs[0]
     end_logits   = model.outputs[1]
     loss         = model.outputs[2]
@@ -235,13 +245,19 @@ def validate_model(test_data, model, polymath):
     best_span_score = symbolic_best_span(begin_prediction, end_prediction)
     predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
     true_span = C.layers.Recurrence(C.plus)(begin_label - C.sequence.past_value(end_label))
+
     common_span = C.element_min(predicted_span, true_span)
+    #print(best_span_score)
+    #print(predicted_span)
+    #print(true_span)
+    #print(common_span)
     begin_match = C.sequence.reduce_sum(C.element_min(begin_prediction, begin_label))
     end_match = C.sequence.reduce_sum(C.element_min(end_prediction, end_label))
-
+    #print(end_match)
     predicted_len = C.sequence.reduce_sum(predicted_span)
     true_len = C.sequence.reduce_sum(true_span)
     common_len = C.sequence.reduce_sum(common_span)
+    #print(common_len)
     f1 = 2*common_len/(predicted_len+true_len)
     exact_match = C.element_min(begin_match, end_match)
     precision = common_len/predicted_len
@@ -344,18 +360,19 @@ def test(test_data, model_path, model_file, config_file):
 
 if __name__=='__main__':
     # default Paths relative to current python file.
+    
     abs_path   = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(abs_path, 'Models')
     data_path  = os.path.join(abs_path, '.')
-
+    print(model_path)
     parser = argparse.ArgumentParser()
     parser.add_argument('-datadir', '--datadir', help='Data directory where the dataset is located', required=False, default=data_path)
-    parser.add_argument('-outputdir', '--outputdir', help='Output directory for checkpoints and models', required=False, default=model_path)
-    parser.add_argument('-logdir', '--logdir', help='Log file', required=False, default=None)
+    parser.add_argument('-outputdir', '--outputdir', help='Output directory for checkpoints and models', required=False, default=None)
+    parser.add_argument('-logdir', '--logdir', help='Log file', required=True, default=None)
     parser.add_argument('-profile', '--profile', help="Turn on profiling", action='store_true', default=False)
     parser.add_argument('-genheartbeat', '--genheartbeat', help="Turn on heart-beat for philly", action='store_true', default=False)
     parser.add_argument('-config', '--config', help='Config file', required=False, default='config')
-    parser.add_argument('-r', '--restart', help='Indicating whether to restart from scratch (instead of restart from checkpoint file by default)', action='store_false')
+    parser.add_argument('-r', '--restart', help='Indicating whether to restart from scratch (instead of restart from checkpoint file by default)', action='store_true')
     parser.add_argument('-test', '--test', help='Test data file', required=False, default=None)
     parser.add_argument('-model', '--model', help='Model file name', required=False, default=model_name)
 
@@ -366,7 +383,7 @@ if __name__=='__main__':
     if args['datadir'] is not None:
         data_path = args['datadir']
         
-    #C.try_set_default_device(C.gpu(0))
+    C.try_set_default_device(C.gpu(C.Communicator.rank() % 2))
 
     test_data = args['test']
     test_model = args['model']

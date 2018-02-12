@@ -47,7 +47,7 @@ class PolyMath:
     def embed(self):
         # load glove
         npglove = np.zeros((self.wg_dim, self.hidden_dim), dtype=np.float32)
-        with open(os.path.join(self.abs_path, 'glove.6B.100d.txt'), encoding='utf-8') as f:
+        with open(os.path.join(self.abs_path, 'glove.6B.300d.txt'), encoding='utf-8') as f:
             for line in f:
                 parts = line.split()
                 word = parts[0].lower()
@@ -205,4 +205,13 @@ class PolyMath:
         end_loss = seq_loss(end_logits, ae)
         #paper_loss = start_loss + end_loss
         new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
+#        print("c_processed: %s  "%str(c_processed.shape))
+#        print("q_processed: %s  "%str(q_processed.shape))
+#        print("att_context: %s  "%str(att_context.shape))
+#        print("mod_context: %s  "%str(mod_context.shape))
+#        print("start_logits: %s  "%str(start_logits.shape))
+#        print("end_logits: %s  "%str(end_logits.shape))
+#        print("start_loss: %s  "%str(start_loss.shape))
+#        print("end_loss: %s  "%str(end_loss.shape))
+#        print("new_loss: %s  "%str(new_loss.shape))
         return C.combine([start_logits, end_logits]), new_loss
