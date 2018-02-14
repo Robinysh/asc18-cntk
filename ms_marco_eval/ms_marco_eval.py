@@ -17,7 +17,11 @@ import sys
 
 from bleu.bleu import Bleu
 from rouge.rouge import Rouge
-from spacy.en import English as NlpEnglish
+#from spacy.en import English as NlpEnglish
+import spacy 
+spacy.load('en')
+from spacy.lang.en import English as NlpEnglish
+
 
 QUERY_ID_JSON_ID = 'query_id'
 ANSWERS_JSON_ID = 'answers'
@@ -125,6 +129,12 @@ def compute_metrics_from_files(p_path_to_reference_file,
         load_file(p_path_to_reference_file)
     candidate_dictionary, _ = load_file(p_path_to_candidate_file)
 
+    refkey = reference_dictionary.keys()
+
+    cankey = candidate_dictionary.keys()
+
+    reference_no_answer_query_ids = [x for x in refkey if x not in cankey]
+    
     filtered_reference_dictionary = \
         {key: value for key, value in reference_dictionary.items() \
                     if key not in reference_no_answer_query_ids}
