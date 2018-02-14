@@ -1,4 +1,4 @@
-# This branch is broken and in development, so it is unlikely to be runable.
+# This branch is broken and in development, so it is unlikely to be runnable.
 
 # Instructions for getting started with bidaf
 
