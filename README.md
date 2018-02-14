@@ -1,3 +1,5 @@
+# This branch is broken and in development, so it is unlikely to be runable.
+
 # Instructions for getting started with bidaf
 
 ## Download the MS MARCO  dataset
