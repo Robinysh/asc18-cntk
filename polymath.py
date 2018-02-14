@@ -64,15 +64,17 @@ class PolyMath:
             return C.times(wg, glove) + C.times(wn, nonglove)
         return func
 
-    def input_layer(self,cgw,cnw,cc,qgw,qnw,qc):
+    def input_layer(self,cgw,cnw,cc,qgw,qnw,qc,agw,anw,ac):
         cgw_ph = C.placeholder()
         cnw_ph = C.placeholder()
         cc_ph  = C.placeholder()
         qgw_ph = C.placeholder()
         qnw_ph = C.placeholder()
         qc_ph  = C.placeholder()
+        agw_ph = C.placeholder()
+        anw_ph = C.placeholder()
+        ac_ph  = C.placeholder()
         
-
         input_chars = C.placeholder(shape=(1,self.word_size,self.c_dim))
         input_glove_words = C.placeholder(shape=(self.wg_dim,))
         input_nonglove_words = C.placeholder(shape=(self.wn_dim,))
@@ -88,13 +90,15 @@ class PolyMath:
         
         qce = C.one_hot(qc_ph, num_classes=self.c_dim, sparse_output=self.use_sparse)
         cce = C.one_hot(cc_ph, num_classes=self.c_dim, sparse_output=self.use_sparse)
+        ace = C.one_hot(ac_ph, num_classes=self.c_dim, sparse_output=self.use_sparse)
                 
         q_processed = processed.clone(C.CloneMethod.share, {input_chars:qce, input_glove_words:qgw_ph, input_nonglove_words:qnw_ph})
         c_processed = processed.clone(C.CloneMethod.share, {input_chars:cce, input_glove_words:cgw_ph, input_nonglove_words:cnw_ph})
+        a_processed = processed.clone(C.CloneMethod.share, {input_chars:ace, input_glove_words:agw_ph, input_nonglove_words:anw_ph})
 
         return C.as_block(
             C.combine([c_processed, q_processed, a_processed]),
-            [(cgw_ph, cgw),(cnw_ph, cnw),(cc_ph, cc),(qgw_ph, qgw),(qnw_ph, qnw),(qc_ph, qc)],
+            [(cgw_ph, cgw),(cnw_ph, cnw),(cc_ph, cc),(qgw_ph, qgw),(qnw_ph, qnw),(qc_ph, qc),(agw_ph, agw),(anw_ph, anw),(ac_ph, ac)],
             'input_layer',
             'input_layer')
         
@@ -184,7 +188,7 @@ class PolyMath:
     def output_layer(self, attention_context, query, answer):
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
         q_processed = C.placeholder(shape=(2*self.hidden_dim,))
-        a_processed = C.placeholder(shape=self.hidden_dim)
+        a_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
         # Encoder: (input*) --> (h0, c0)
         # Create multiple layers of LSTMs by passing the output of the i-th layer
@@ -269,7 +273,7 @@ class PolyMath:
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
         s2smodel = create_model()
         # create the training wrapper for the s2smodel, as well as the criterion function
-        model_train = create_model_train(s2smodel)(query, answer_processed)
+        model_train = create_model_train(s2smodel)(query, a_processed)
 
         # also wire in a greedy decoder so that we can properly log progress on a validation example
         # This is not used for the actual training process.
@@ -301,12 +305,14 @@ class PolyMath:
         cnw = C.input_variable(self.wn_dim, dynamic_axes=[b,c], is_sparse=self.use_sparse, name='cnw')
         qgw = C.input_variable(self.wg_dim, dynamic_axes=[b,q], is_sparse=self.use_sparse, name='qgw')
         qnw = C.input_variable(self.wn_dim, dynamic_axes=[b,q], is_sparse=self.use_sparse, name='qnw')
+        agw = C.input_variable(self.wg_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='agw')
+        anw = C.input_variable(self.wn_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='anw')
         cc = C.input_variable((1,self.word_size), dynamic_axes=[b,c], name='cc')
         qc = C.input_variable((1,self.word_size), dynamic_axes=[b,q], name='qc')
-        ac  = C.input_variable((1), dynamic_axes=[b,a], name='a')
+        ac = C.input_variable((1,self.word_size), dynamic_axes=[b,a], name='ac')
 
         #input layer
-        c_processed, q_processed, a_processed = self.input_layer(cgw,cnw,cc,qgw,qnw,qc,ac).outputs
+        c_processed, q_processed, a_processed = self.input_layer(cgw,cnw,cc,qgw,qnw,qc,agw,anw,ac).outputs
         
         # attention layer
         att_context = self.attention_layer(c_processed, q_processed)

@@ -27,24 +27,26 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
             C.io.StreamDefs(
                 context_g_words  = C.io.StreamDef('cgw', shape=polymath.wg_dim,     is_sparse=True),
                 query_g_words    = C.io.StreamDef('qgw', shape=polymath.wg_dim,     is_sparse=True),
+                answer_g_words   = C.io.StreamDef('agw', shape=polymath.wg_dim,     is_sparse=True),
                 context_ng_words = C.io.StreamDef('cnw', shape=polymath.wn_dim,     is_sparse=True),
                 query_ng_words   = C.io.StreamDef('qnw', shape=polymath.wn_dim,     is_sparse=True),
-                answer_begin     = C.io.StreamDef('ab',  shape=polymath.a_dim,      is_sparse=False),
-                answer_end       = C.io.StreamDef('ae',  shape=polymath.a_dim,      is_sparse=False),
+                answer_ng_words  = C.io.StreamDef('anw', shape=polymath.wn_dim,     is_sparse=True),
                 context_chars    = C.io.StreamDef('cc',  shape=polymath.word_size,  is_sparse=False),
-                query_chars      = C.io.StreamDef('qc',  shape=polymath.word_size,  is_sparse=False))),
+                query_chars      = C.io.StreamDef('qc',  shape=polymath.word_size,  is_sparse=False),
+                answer_chars      = C.io.StreamDef('ac',  shape=polymath.word_size,  is_sparse=False))),
         randomize=randomize,
         max_sweeps=C.io.INFINITELY_REPEAT if repeat else 1)
 
     input_map = {
         argument_by_name(func, 'cgw'): mb_source.streams.context_g_words,
         argument_by_name(func, 'qgw'): mb_source.streams.query_g_words,
+        argument_by_name(func, 'agw'): mb_source.streams.answer_g_words,
         argument_by_name(func, 'cnw'): mb_source.streams.context_ng_words,
         argument_by_name(func, 'qnw'): mb_source.streams.query_ng_words,
+        argument_by_name(func, 'anw'): mb_source.streams.answer_ng_words,
         argument_by_name(func, 'cc' ): mb_source.streams.context_chars,
         argument_by_name(func, 'qc' ): mb_source.streams.query_chars,
-        argument_by_name(func, 'ab' ): mb_source.streams.answer_begin,
-        argument_by_name(func, 'ae' ): mb_source.streams.answer_end
+        argument_by_name(func, 'ac' ): mb_source.streams.query_chars
     }
     return mb_source, input_map
 
@@ -54,7 +56,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
         batch_count = 0
         while not(eof and (batch_count % num_workers) == 0):
             batch_count += 1
-            batch={'cwids':[], 'qwids':[], 'baidx':[], 'eaidx':[], 'ccids':[], 'qcids':[]}
+            batch={'cwids':[], 'qwids':[], 'awids':[], 'ccids':[], 'qcids':[], 'acids':[]}
 
             while not eof and len(batch['cwids']) < seqs:
                 line = f.readline()
@@ -66,33 +68,36 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                     import re
                     misc['uid'].append(re.match('^([^\t]*)', line).groups()[0])
 
-                ctokens, qtokens, atokens, cwids, qwids,  baidx,   eaidx, ccids, qcids = tsv2ctf.tsv_iter(line, polymath.vocab, polymath.chars, is_test, misc)
+                ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids, acids = tsv2ctf.tsv_iter(line, polymath.vocab, polymath.chars, is_test, misc)
 
                 batch['cwids'].append(cwids)
                 batch['qwids'].append(qwids)
-                batch['baidx'].append(baidx)
-                batch['eaidx'].append(eaidx)
+                batch['awids'].append(awids)
                 batch['ccids'].append(ccids)
                 batch['qcids'].append(qcids)
+                batch['acids'].append(acids)
 
             if len(batch['cwids']) > 0:
                 context_g_words  = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in cwids] for cwids in batch['cwids']], polymath.wg_dim)
                 context_ng_words = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in cwids] for cwids in batch['cwids']], polymath.wn_dim)
+                context_ng_words = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in cwids] for cwids in batch['cwids']], polymath.wn_dim)
                 query_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in qwids] for qwids in batch['qwids']], polymath.wg_dim)
                 query_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in qwids] for qwids in batch['qwids']], polymath.wn_dim)
+                answer_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in awids] for awids in batch['awids']], polymath.wg_dim)
+                answer_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in awids] for awids in batch['awids']], polymath.wn_dim)
                 context_chars = [np.asarray([[[c for c in cc+[0]*max(0,polymath.word_size-len(cc))]] for cc in ccid], dtype=np.float32) for ccid in batch['ccids']]
                 query_chars   = [np.asarray([[[c for c in qc+[0]*max(0,polymath.word_size-len(qc))]] for qc in qcid], dtype=np.float32) for qcid in batch['qcids']]
-                answer_begin = [np.asarray(ab, dtype=np.float32) for ab in batch['baidx']]
-                answer_end   = [np.asarray(ae, dtype=np.float32) for ae in batch['eaidx']]
+                answer_chars   = [np.asarray([[[c for c in ac+[0]*max(0,polymath.word_size-len(ac))]] for ac in acid], dtype=np.float32) for acid in batch['acids']]
 
                 yield { argument_by_name(func, 'cgw'): context_g_words,
                         argument_by_name(func, 'qgw'): query_g_words,
+                        argument_by_name(func, 'agw'): answer_g_words,
                         argument_by_name(func, 'cnw'): context_ng_words,
                         argument_by_name(func, 'qnw'): query_ng_words,
+                        argument_by_name(func, 'anw'): answer_ng_words,
                         argument_by_name(func, 'cc' ): context_chars,
                         argument_by_name(func, 'qc' ): query_chars,
-                        argument_by_name(func, 'ab' ): answer_begin,
-                        argument_by_name(func, 'ae' ): answer_end }
+                        argument_by_name(func, 'ac' ): answer_chars}
             else:
                 yield {} # need to generate empty batch for distributed training
 
@@ -137,7 +142,6 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
 
     model_file = os.path.join(model_path, model_name)
     model = C.combine(list(z.outputs) + [loss.output])
-    label_ab = argument_by_name(loss, 'ab')
 
     epoch_stat = {
         'best_val_err' : 100,
@@ -236,8 +240,6 @@ def validate_model(test_data, model, polymath):
     predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
     true_span = C.layers.Recurrence(C.plus)(begin_label - C.sequence.past_value(end_label))
     common_span = C.element_min(predicted_span, true_span)
-    begin_match = C.sequence.reduce_sum(C.element_min(begin_prediction, begin_label))
-    end_match = C.sequence.reduce_sum(C.element_min(end_prediction, end_label))
 
     predicted_len = C.sequence.reduce_sum(predicted_span)
     true_len = C.sequence.reduce_sum(true_span)
