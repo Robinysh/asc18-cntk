@@ -185,26 +185,26 @@ class PolyMath:
             'output_layer')
     """
 
-    def output_layer(self, attention_context, query, answer):
+    def output_layer(self, attention_context, answer):
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
-        q_processed = C.placeholder(shape=(2*self.hidden_dim,))
-        a_processed = C.placeholder(shape=(2*self.hidden_dim,))
-
-        # Encoder: (input*) --> (h0, c0)
-        # Create multiple layers of LSTMs by passing the output of the i-th layer
-        # to the (i+1)th layer as its input
-        # Note: We go_backwards for the plain model, but forward for the attention model.
-        with C.layers.default_options(enable_self_stabilization=True, go_backwards=False):
-            LastRecurrence = C.layers.Recurrence
-            encode = C.layers.Sequential([
-                C.layers.Stabilizer(),
-                C.layers.For(range(self.num_layers-1), lambda:
-                    C.layers.Recurrence(C.layers.LSTM(self.hidden_dim))),
-                LastRecurrence(C.layers.LSTM(self.hidden_dim), return_full_state=True),
-                (C.layers.Label('encoded_h'), C.layers.Label('encoded_c')),
-            ])
+        label_processed = C.placeholder(shape=(len(self.vocab),))
+        #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
         def create_model():
+            # Encoder: (input*) --> (h0, c0)
+            # Create multiple layers of LSTMs by passing the output of the i-th layer
+            # to the (i+1)th layer as its input
+            # Note: We go_backwards for the plain model, but forward for the attention model.
+            with C.layers.default_options(enable_self_stabilization=True, go_backwards=False):
+                LastRecurrence = C.layers.Recurrence
+                encode = C.layers.Sequential([
+                    C.layers.Stabilizer(),
+                    C.layers.For(range(self.num_layers-1), lambda:
+                        C.layers.Recurrence(C.layers.LSTM(self.hidden_dim))),
+                    LastRecurrence(C.layers.LSTM(self.hidden_dim), return_full_state=True),
+                    (C.layers.Label('encoded_h'), C.layers.Label('encoded_c')),
+                ])
+
             # Decoder: (history*, input*) --> unnormalized_word_logp*
             # where history is one of these, delayed by 1 step and <s> prepended:
             #  - training: labels
@@ -257,31 +257,28 @@ class PolyMath:
             # model used in (greedy) decoding (inferencing) (history is decoder's own output)
             @C.Function
             def model_greedy(input): # (input*) --> (word_sequence*)
-
                 # Decoding is an unfold() operation starting from sentence_start.
                 # We must transform s2smodel (history*, input* -> word_logp*) into a generator (history* -> output*)
                 # which holds 'input' in its closure.
-                unfold = C.layers.UnfoldFrom(lambda history: s2smodel(history, input) >> C.hardmax,
+                unfold = C.layers.UnfoldFrom(\
+                                    lambda history: s2smodel(history, input) >> C.hardmax,
                                     # stop once sentence_end_index was max-scoring output
                                     until_predicate=lambda w: w[...,self.sentence_end_index],
                                     length_increase=self.sentence_max_length)
             
                 return unfold(initial_state=self.sentence_start, dynamic_axes_like=input)
             return model_greedy
-
         
-        att_context = C.placeholder(shape=(8*self.hidden_dim,))
         s2smodel = create_model()
         # create the training wrapper for the s2smodel, as well as the criterion function
-        model_train = create_model_train(s2smodel)(query, a_processed)
-
+        model_train = create_model_train(s2smodel)(att_context, label_processed)
         # also wire in a greedy decoder so that we can properly log progress on a validation example
         # This is not used for the actual training process.
-        model_greedy = create_model_greedy(s2smodel)(query)
+        model_greedy = create_model_greedy(s2smodel)(att_context)
 
         return C.as_block(
             C.combine([model_greedy, model_train]),
-            [(att_context, attention_context), (q_processed, query), (label_processed, labels)],
+            [(att_context, attention_context), (label_processed, labels)],
             'attention_layer',
             'attention_layer')
 
@@ -321,7 +318,8 @@ class PolyMath:
         mod_context = self.modeling_layer(att_context)
 
         # output layer
-        test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
+        #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
+        test_output, train_logits = self.output_layer(mod_context, a_processed)
 
         seq_loss = create_criterion_function()
     
