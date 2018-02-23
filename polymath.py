@@ -161,32 +161,108 @@ class PolyMath:
             [(att_context, attention_context)],
             'modeling_layer',
             'modeling_layer')
-    """
-    def output_layer(self, attention_context, modeling_context):
-        att_context = C.placeholder(shape=(8*self.hidden_dim,))
-        mod_context = C.placeholder(shape=(2*self.hidden_dim,))
-        #output layer
-        start_logits = C.layers.Dense(1, name='out_start')(C.dropout(C.splice(mod_context, att_context), self.dropout))
-        if self.two_step:
-            start_hardmax = seq_hardmax(start_logits)
-            att_mod_ctx = C.sequence.last(C.sequence.gather(mod_context, start_hardmax))
-        else:
-            start_prob = C.softmax(start_logits)
-            att_mod_ctx = C.sequence.reduce_sum(mod_context * start_prob)
-        att_mod_ctx_expanded = C.sequence.broadcast_as(att_mod_ctx, att_context)
-        end_input = C.splice(att_context, mod_context, att_mod_ctx_expanded, mod_context * att_mod_ctx_expanded)
-        m2 = OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='output_rnn')(end_input)
-        end_logits = C.layers.Dense(1, name='out_end')(C.dropout(C.splice(m2, att_context), self.dropout))
-
-        return C.as_block(
-            C.combine([start_logits, end_logits]),
-            [(att_context, attention_context), (mod_context, modeling_context)],
-            'output_layer',
-            'output_layer')
-    """
 
     def output_layer(self, attention_context, answer):
-        att_context = C.placeholder(shape=(8*self.hidden_dim,))
+        att_context = C.placeholder(shape=(2*self.hidden_dim,))
+        label_processed = C.placeholder(shape=(len(self.vocab),))
+    #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
+
+
+        # Encoder: (input*) --> (h0, c0)
+        # Create multiple layers of LSTMs by passing the output of the i-th layer
+        # to the (i+1)th layer as its input
+        # Note: We go_backwards for the plain model, but forward for the attention model.
+        with C.layers.default_options(enable_self_stabilization=True, go_backwards=False):
+            LastRecurrence = C.layers.Recurrence
+            encode = C.layers.Sequential([
+                C.layers.Stabilizer(),
+                C.layers.For(range(self.num_layers-1), lambda:
+                    C.layers.Recurrence(C.layers.LSTM(self.hidden_dim))),
+                LastRecurrence(C.layers.LSTM(self.hidden_dim), return_full_state=True),
+                (C.layers.Label('encoded_h'), C.layers.Label('encoded_c')),
+            ])
+
+        # Decoder: (history*, input*) --> unnormalized_word_logp*
+        # where history is one of these, delayed by 1 step and <s> prepended:
+        #  - training: labels
+        #  - testing:  its own output hardmax(z) (greedy decoder)
+        with C.layers.default_options(enable_self_stabilization=True):
+            # sub-layers
+            stab_in = C.layers.Stabilizer()
+            rec_blocks = [C.layers.LSTM(self.hidden_dim) for i in range(self.num_layers)]
+            stab_out = C.layers.Stabilizer()
+            proj_out = C.layers.Dense(len(self.vocab), name='out_proj')
+            # attention model
+            attention_model = C.layers.AttentionModel(self.attention_dim, 
+                                                          name='attention_model') # :: (h_enc*, h_dec) -> (h_dec augmented)
+            # layer function
+            @C.Function
+            def decode(history, input):
+                encoded_input = encode(input)
+                r = history
+                r = stab_in(r)
+                for i in range(self.num_layers):
+                    rec_block = rec_blocks[i]   # LSTM(hidden_dim)  # :: (dh, dc, x) -> (h, c)
+                    if i == 0:
+                        @C.Function
+                        def lstm_with_attention(dh, dc, x):
+                            h_att = attention_model(encoded_input.outputs[0], dh)
+                            x = C.splice(x, h_att)
+                            return rec_block(dh, dc, x)
+                        r = C.layers.Recurrence(lstm_with_attention)(r)
+                    else:
+                        r = C.layers.Recurrence(rec_block)(r)
+                r = stab_out(r)
+                r = proj_out(r)
+                r = C.layers.Label('out_proj_out')(r)
+                return r
+        
+        # model used in (greedy) decoding (inferencing) (history is decoder's own output)
+
+        def create_model_greedy(s2smodel):
+            @C.Function
+            def model_greedy(input): # (input*) --> (word_sequence*)
+            # Decoding is an unfold() operation starting from sentence_start.
+            # We must transform s2smodel (history*, input* -> word_logp*) into a generator (history* -> output*)
+            # which holds 'input' in its closure.
+                unfold = C.layers.UnfoldFrom(\
+                                    lambda history: s2smodel(history, input) >> C.hardmax,
+                                # stop once sentence_end_index was max-scoring output
+                                    until_predicate=lambda w: w[...,self.sentence_end_index],
+                                    length_increase=self.sentence_max_length)
+            
+                return unfold(initial_state=self.sentence_start, dynamic_axes_like=input)
+            return model_greedy
+
+        past_labels = C.layers.Delay(initial_state=self.sentence_start)(label_processed) 
+        encoded_input = encode(att_context)
+        r = past_labels
+        r = stab_in(r)
+        for i in range(self.num_layers):
+            rec_block = rec_blocks[i]   # LSTM(hidden_dim)  # :: (dh, dc, x) -> (h, c)
+            if i == 0:
+                @C.Function
+                def lstm_with_attention(dh, dc, x):
+                    h_att = attention_model(encoded_input.outputs[0], dh)
+                    x = C.splice(x, h_att)
+                    return rec_block(dh, dc, x)
+                r = C.layers.Recurrence(lstm_with_attention)(r)
+            else:
+                r = C.layers.Recurrence(rec_block)(r)
+        r = stab_out(r)
+        r = proj_out(r)
+        r = C.layers.Label('out_proj_out')(r)           
+        greedyout = create_model_greedy(decode)(label_processed)
+#            decod = decode(past_labels, att_context)
+        return C.as_block(C.combine([r, greedyout]) , [(att_context, attention_context), (label_processed, answer)], 'outlay')
+
+
+
+
+    '''
+
+    def output_layer(self, attention_context, answer):
+        att_context = C.placeholder(shape=(2*self.hidden_dim,))
         label_processed = C.placeholder(shape=(len(self.vocab),))
         #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
@@ -239,48 +315,57 @@ class PolyMath:
                     r = proj_out(r)
                     r = C.layers.Label('out_proj_out')(r)
                     return r
-            return decode
-
-        def create_model_train(s2smodel):
-            # model used in training (history is known from labels)
-            # note: the labels must NOT contain the initial <s>
-            @C.Function
-            def model_train(input, labels): # (input*, labels*) --> (word_logp*)
-
-                # The input to the decoder always starts with the special label sequence start token.
-                # Then, use the previous value of the label sequence (for training) or the output (for execution).
-                past_labels = C.layers.Delay(initial_state=self.sentence_start)(labels)
-                return s2smodel(past_labels, input)
-            return model_train
-
-        def create_model_greedy(s2smodel):
+            
             # model used in (greedy) decoding (inferencing) (history is decoder's own output)
-            @C.Function
-            def model_greedy(input): # (input*) --> (word_sequence*)
+
+            def create_model_greedy(s2smodel):
+                @C.Function
+                def model_greedy(input): # (input*) --> (word_sequence*)
                 # Decoding is an unfold() operation starting from sentence_start.
                 # We must transform s2smodel (history*, input* -> word_logp*) into a generator (history* -> output*)
                 # which holds 'input' in its closure.
-                unfold = C.layers.UnfoldFrom(\
-                                    lambda history: s2smodel(history, input) >> C.hardmax,
+                    unfold = C.layers.UnfoldFrom(\
+                                        lambda history: s2smodel(history, input) >> C.hardmax,
                                     # stop once sentence_end_index was max-scoring output
-                                    until_predicate=lambda w: w[...,self.sentence_end_index],
-                                    length_increase=self.sentence_max_length)
-            
-                return unfold(initial_state=self.sentence_start, dynamic_axes_like=input)
-            return model_greedy
+                                        until_predicate=lambda w: w[...,self.sentence_end_index],
+                                        length_increase=self.sentence_max_length)
+                
+                    return unfold(initial_state=self.sentence_start, dynamic_axes_like=input)
+                return model_greedy
+
+            past_labels = C.layers.Delay(initial_state=self.sentence_start)(label_processed) 
+            encoded_input = encode(att_context)
+            r = past_labels
+            r = stab_in(r)
+            for i in range(self.num_layers):
+                rec_block = rec_blocks[i]   # LSTM(hidden_dim)  # :: (dh, dc, x) -> (h, c)
+                if i == 0:
+                    @C.Function
+                    def lstm_with_attention(dh, dc, x):
+                        h_att = attention_model(encoded_input.outputs[0], dh)
+                        x = C.splice(x, h_att)
+                        return rec_block(dh, dc, x)
+                    r = C.layers.Recurrence(lstm_with_attention)(r)
+                else:
+                    r = C.layers.Recurrence(rec_block)(r)
+            r = stab_out(r)
+            r = proj_out(r)
+            r = C.layers.Label('out_proj_out')(r)           
+            greedyout = create_model_greedy(decode)(label_processed)
+#            decod = decode(past_labels, att_context)
+            return C.as_block(C.combine([r, greedyout]) , [(att_context, attention_context), (label_processed, answer)], 'outlay')
         
-        s2smodel = create_model()
+        model_train, model_greed = create_model()
         # create the training wrapper for the s2smodel, as well as the criterion function
-        model_train = create_model_train(s2smodel)(att_context, label_processed)
+#        model_train = create_model_train(s2smodel)(att_context, label_processed)
+#        model_train = create_model_train(s2smodel)
         # also wire in a greedy decoder so that we can properly log progress on a validation example
         # This is not used for the actual training process.
-        model_greedy = create_model_greedy(s2smodel)(att_context)
+#        model_greedy = create_model_greedy(s2smodel)(att_context)
 
-        return C.as_block(
-            C.combine([model_greedy, model_train]),
-            [(att_context, attention_context), (label_processed, labels)],
-            'attention_layer',
-            'attention_layer')
+        return C.as_bl
+    '''
+
 
     def create_criterion_function(self):
         @C.Function
@@ -319,9 +404,9 @@ class PolyMath:
 
         # output layer
         #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
-        test_output, train_logits = self.output_layer(mod_context, a_processed)
-
-        seq_loss = create_criterion_function()
+        train_logits, test_out = self.output_layer(mod_context, a_processed)
+        #train_logits = train_logits(mod_context)
+        seq_loss = self.create_criterion_function()
     
         loss = seq_loss(train_logits, a_processed)
 
@@ -330,4 +415,4 @@ class PolyMath:
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return output, loss
+        return train_logits, loss
