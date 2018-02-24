@@ -46,7 +46,6 @@ def populate_dicts(files):
             word = line.split()[0].lower()
             if wdcnt[word] >= 1 or test_wdcnt[word] >= 1: # polymath adds word to dict regardless of word_count_threshold when it's in GloVe
                 _ = vocab[word]
-    # add start and end token to vocab
     known =len(vocab)
 
     # add the special markers
@@ -67,14 +66,13 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
 
     if is_test:
         uid, title, context, query = line.split('\t')
-        raw_answer = ''
+        answer = ''
     else:
         uid, title, context, query, answer, raw_context, begin_answer, end_answer, raw_answer = line.split('\t')
-        #uid, title, context, query, begin_answer, end_answer, answer = line.split('\t')
 
     ctokens = context.split(' ')
     qtokens = query.split(' ')
-    atokens = raw_answer.split(' ')
+    atokens = answer.split(' ')
 
     #replace EMPTY_TOKEN with ''
     ctokens = [t if t != EMPTY_TOKEN else '' for t in ctokens]
@@ -94,7 +92,6 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
         misc['rawctx'] += [context]
         misc['ctoken'] += [ctokens]
 
-    #return ctokens, qtokens, atokens, cwids, qwids, baidx, eaidx, ccids, qcids
     return ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids, acids
 
 def tsv_to_ctf(f, g, vocab, chars, is_test):
