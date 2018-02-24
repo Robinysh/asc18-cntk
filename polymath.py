@@ -18,7 +18,11 @@ class PolyMath:
 
         with open(pickle_file, 'rb') as vf:
             known, self.vocab, self.chars = pickle.load(vf)
-        
+
+
+    #    self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32))
+    #    self.sentence_end_index = self.vocab['</s>']
+    #    self.sentence_max_length = 64        
         self.wg_dim = known
         self.wn_dim = len(self.vocab) - known
         self.c_dim = len(self.chars)
@@ -95,16 +99,9 @@ class PolyMath:
         q_processed = processed.clone(C.CloneMethod.share, {input_chars:qce, input_glove_words:qgw_ph, input_nonglove_words:qnw_ph})
         c_processed = processed.clone(C.CloneMethod.share, {input_chars:cce, input_glove_words:cgw_ph, input_nonglove_words:cnw_ph})
         a_processed = processed.clone(C.CloneMethod.share, {input_chars:ace, input_glove_words:agw_ph, input_nonglove_words:anw_ph})
+        answer = C.splice(agw_ph, anw_ph)
 
-        return C.as_block(
-            C.combine([c_processed, q_processed, a_processed]),
-            [(cgw_ph, cgw),(cnw_ph, cnw),(cc_ph, cc),(qgw_ph, qgw),(qnw_ph, qnw),(qc_ph, qc),(agw_ph, agw),(anw_ph, anw),(ac_ph, ac)],
-            'input_layer',
-            'input_layer')
-        
-    def attention_layer(self, context, query):
-        q_processed = C.placeholder(shape=(2*self.hidden_dim,))
-        c_processed = C.placeholder(shape=(2*self.hidden_dim,))
+
 
         #convert query's sequence axis to static
         qvw, qvw_mask = C.sequence.unpack(q_processed, padding_value=0).outputs
@@ -140,55 +137,12 @@ class PolyMath:
 
         att_context = C.splice(c_processed, c2q, c_processed * c2q, q2c_out)
 
-        return C.as_block(
-            att_context,
-            [(c_processed, context), (q_processed, query)],
-            'attention_layer',
-            'attention_layer')
-            
-    def modeling_layer(self, attention_context):
-        att_context = C.placeholder(shape=(8*self.hidden_dim,))
         #modeling layer
         # todo: use dropout in optimized_rnn_stack from cudnn once API exposes it
-        mod_context = C.layers.Sequential([
-            C.layers.Dropout(self.dropout),
+        mod_context = C.layers.Sequential([C.layers.Dropout(self.dropout),
             OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='model_rnn0'),
             C.layers.Dropout(self.dropout),
             OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='model_rnn1')])(att_context)
-
-        return C.as_block(
-            mod_context,
-            [(att_context, attention_context)],
-            'modeling_layer',
-            'modeling_layer')
-    """
-    def output_layer(self, attention_context, modeling_context):
-        att_context = C.placeholder(shape=(8*self.hidden_dim,))
-        mod_context = C.placeholder(shape=(2*self.hidden_dim,))
-        #output layer
-        start_logits = C.layers.Dense(1, name='out_start')(C.dropout(C.splice(mod_context, att_context), self.dropout))
-        if self.two_step:
-            start_hardmax = seq_hardmax(start_logits)
-            att_mod_ctx = C.sequence.last(C.sequence.gather(mod_context, start_hardmax))
-        else:
-            start_prob = C.softmax(start_logits)
-            att_mod_ctx = C.sequence.reduce_sum(mod_context * start_prob)
-        att_mod_ctx_expanded = C.sequence.broadcast_as(att_mod_ctx, att_context)
-        end_input = C.splice(att_context, mod_context, att_mod_ctx_expanded, mod_context * att_mod_ctx_expanded)
-        m2 = OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='output_rnn')(end_input)
-        end_logits = C.layers.Dense(1, name='out_end')(C.dropout(C.splice(m2, att_context), self.dropout))
-
-        return C.as_block(
-            C.combine([start_logits, end_logits]),
-            [(att_context, attention_context), (mod_context, modeling_context)],
-            'output_layer',
-            'output_layer')
-    """
-
-    def output_layer(self, attention_context, answer):
-        att_context = C.placeholder(shape=(8*self.hidden_dim,))
-        label_processed = C.placeholder(shape=(len(self.vocab),))
-        #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
         def create_model():
             # Encoder: (input*) --> (h0, c0)
@@ -271,26 +225,26 @@ class PolyMath:
         
         s2smodel = create_model()
         # create the training wrapper for the s2smodel, as well as the criterion function
-        model_train = create_model_train(s2smodel)(att_context, label_processed)
+        model_train = create_model_train(s2smodel)(mod_context, answer)
         # also wire in a greedy decoder so that we can properly log progress on a validation example
         # This is not used for the actual training process.
-        model_greedy = create_model_greedy(s2smodel)(att_context)
+        #model_greedy = create_model_greedy(s2smodel)(att_context)
+        model_greedy = create_model_greedy(s2smodel)
+          
+        return answer , model_greedy, C.as_block(model_train, 
+               [(cgw_ph, cgw),(cnw_ph, cnw),(cc_ph, cc),(qgw_ph, qgw),(qnw_ph, qnw),(qc_ph, qc),(agw_ph, agw),(anw_ph, anw),(ac_ph, ac)], 'mod_layer', 'out_layer') 
 
-        return C.as_block(
-            C.combine([model_greedy, model_train]),
-            [(att_context, attention_context), (label_processed, labels)],
-            'attention_layer',
-            'attention_layer')
 
-    def create_criterion_function(self):
+    def create_criterion_function(self, InputSequence):
         @C.Function
+        @C.layers.typing.Signature(input = InputSequence[C.layers.typing.Tensor[self.wg_dim+self.wn_dim]], labels = InputSequence[C.layers.typing.Tensor[self.wg_dim+self.wn_dim]])
         def criterion(input, labels):
             # criterion function must drop the <s> from the labels
-            postprocessed_labels = C.sequence.slice(labels, 1, 0) # <s> A B C </s> --> A B C </s>
-            ce = C.cross_entropy_with_softmax(input, postprocessed_labels)
-            errs = C.classification_error(input, postprocessed_labels)
+            #postprocessed_labels = C.sequence.slice(labels, 1, 0) # <s> A B C </s> --> A B C </s>
+            #The code above depend on whether your output has SOS
+            ce = C.cross_entropy_with_softmax(input, labels,-2)
+            errs = C.classification_error(input, labels,-2)
             return (ce, errs)
-
         return criterion
 
     def model(self):
@@ -308,26 +262,11 @@ class PolyMath:
         qc = C.input_variable((1,self.word_size), dynamic_axes=[b,q], name='qc')
         ac = C.input_variable((1,self.word_size), dynamic_axes=[b,a], name='ac')
 
-        #input layer
-        c_processed, q_processed, a_processed = self.input_layer(cgw,cnw,cc,qgw,qnw,qc,agw,anw,ac).outputs
-        
-        # attention layer
-        att_context = self.attention_layer(c_processed, q_processed)
+        IS = C.layers.typing.SequenceOver[C.Axis('a')]
 
-        # modeling layer
-        mod_context = self.modeling_layer(att_context)
+        answer, test_output, train_logits  = self.input_layer(cgw,cnw,cc,qgw,qnw,qc,agw,anw,ac)
+        seq_loss = self.create_criterion_function(IS)
 
-        # output layer
-        #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
-        test_output, train_logits = self.output_layer(mod_context, a_processed)
+        loss = seq_loss(train_logits, answer)
 
-        seq_loss = create_criterion_function()
-    
-        loss = seq_loss(train_logits, a_processed)
-
-        # loss
-        #start_loss = seq_loss(start_logits)
-        #end_loss = seq_loss(end_logits)
-        #paper_loss = start_loss + end_loss
-        #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return output, loss
+        return train_logits, loss
