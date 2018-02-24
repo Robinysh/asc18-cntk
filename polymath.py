@@ -20,9 +20,10 @@ class PolyMath:
             known, self.vocab, self.chars = pickle.load(vf)
         
         self.wg_dim = known
-        self.wn_dim = len(self.vocab) - known
+        self.vocab_size = len(self.vocab) + 3 #SOS and EOS
+        self.wn_dim = self.vocab_size - known
         self.c_dim = len(self.chars)
-        self.hidden_dim = model_config['hidden_dim']
+        self.hidden_dim = model_config['hidden_dim'] + 2 #SOS and EOS
         self.num_layers = model_config['num_layers']
         self.attention_dim = model_config['attention_dim']
         self.convs = model_config['char_convs']
@@ -33,8 +34,10 @@ class PolyMath:
         self.use_cudnn = model_config['use_cudnn']
         self.use_sparse = True
 
-        self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32))
-        self.sentence_end_index = self.vocab['</s>']
+        self.sentence_start = C.one_hot(self.char_emb_dim+self.hidden_dim-2, self.char_emb_dim+self.hidden_dim, sparse_output=self.use_sparse)
+        self.sentence_end_index = self.char_emb_dim+self.hidden_dim-1
+        #self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32), name='start')
+        #self.sentence_end_index = self.vocab['</s>']
         self.sentence_max_length = 64
 
         print('dropout', self.dropout)
@@ -56,9 +59,9 @@ class PolyMath:
                 parts = line.split()
                 word = parts[0].lower()
                 if word in self.vocab:
-                    npglove[self.vocab[word],:] = np.asarray([float(p) for p in parts[1:]])
+                    npglove[self.vocab[word],:] = np.asarray([float(p) for p in parts[1:]]+[0,0])
         glove = C.constant(npglove)
-        nonglove = C.parameter(shape=(len(self.vocab) - self.wg_dim, self.hidden_dim), init=C.glorot_uniform(), name='TrainableE')
+        nonglove = C.parameter(shape=(self.vocab_size - self.wg_dim, self.hidden_dim), init=C.glorot_uniform(), name='TrainableE')
         
         def func(wg, wn):
             return C.times(wg, glove) + C.times(wn, nonglove)
@@ -187,7 +190,7 @@ class PolyMath:
 
     def output_layer(self, attention_context, answer):
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
-        label_processed = C.placeholder(shape=(len(self.vocab),))
+        label_processed = C.placeholder(shape=(self.vocab_size,))
         #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
         def create_model():
@@ -214,7 +217,7 @@ class PolyMath:
                 stab_in = C.layers.Stabilizer()
                 rec_blocks = [C.layers.LSTM(self.hidden_dim) for i in range(self.num_layers)]
                 stab_out = C.layers.Stabilizer()
-                proj_out = C.layers.Dense(len(self.vocab), name='out_proj')
+                proj_out = C.layers.Dense(self.vocab_size, name='out_proj')
                 # attention model
                 attention_model = C.layers.AttentionModel(self.attention_dim, 
                                                               name='attention_model') # :: (h_enc*, h_dec) -> (h_dec augmented)
@@ -265,7 +268,7 @@ class PolyMath:
                                     # stop once sentence_end_index was max-scoring output
                                     until_predicate=lambda w: w[...,self.sentence_end_index],
                                     length_increase=self.sentence_max_length)
-            
+                return input 
                 return unfold(initial_state=self.sentence_start, dynamic_axes_like=input)
             return model_greedy
         
@@ -278,7 +281,7 @@ class PolyMath:
 
         return C.as_block(
             C.combine([model_greedy, model_train]),
-            [(att_context, attention_context), (label_processed, labels)],
+            [(att_context, attention_context), (label_processed, answer)],
             'attention_layer',
             'attention_layer')
 
@@ -323,11 +326,11 @@ class PolyMath:
 
         seq_loss = create_criterion_function()
     
-        loss = seq_loss(train_logits, a_processed)
+        loss = seq_loss(train_logits, a_onehot) #Feed onehot answer into it
 
         # loss
         #start_loss = seq_loss(start_logits)
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return output, loss
+        return test_output, loss

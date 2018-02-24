@@ -151,7 +151,8 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
     if restore and os.path.isfile(model_file):
         trainer.restore_from_checkpoint(model_file)
         #after restore always re-evaluate
-        epoch_stat['best_val_err'] = validate_model(os.path.join(data_path, training_config['val_data']), model, polymath)
+        #TODO replace with rougel with external script(possibly)
+        #epoch_stat['best_val_err'] = validate_model(os.path.join(data_path, training_config['val_data']), model, polymath)
 
     def post_epoch_work(epoch_stat):
         trainer.summarize_training_progress()
@@ -162,18 +163,22 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
             temp = dict((p.uid, p.value) for p in z.parameters)
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
-            val_err = validate_model(os.path.join(data_path, training_config['val_data']), model, polymath)
-            if epoch_stat['best_val_err'] > val_err:
-                epoch_stat['best_val_err'] = val_err
-                epoch_stat['best_since'] = 0
-                trainer.save_checkpoint(model_file)
-                for p in trainer.model.parameters:
-                    p.value = temp[p.uid]
-            else:
-                epoch_stat['best_since'] += 1
-                if epoch_stat['best_since'] > training_config['stop_after']:
-                    return False
-
+            #TODO replace with rougel with external script(possibly)
+            #val_err = validate_model(os.path.join(data_path, training_config['val_data']), model, polymath)
+            #if epoch_stat['best_val_err'] > val_err:
+            #    epoch_stat['best_val_err'] = val_err
+            #    epoch_stat['best_since'] = 0
+            #    trainer.save_checkpoint(model_file)
+            #    for p in trainer.model.parameters:
+            #        p.value = temp[p.uid]
+            #else:
+            #    epoch_stat['best_since'] += 1
+            #    if epoch_stat['best_since'] > training_config['stop_after']:
+            #        return False
+            trainer.save_checkpoint(model_file)
+            epoch_stat['best_since'] += 1
+            if epoch_stat['best_since'] > training_config['stop_after']:
+                return False
         if profiling:
             C.debugging.enable_profiler()
 
@@ -233,8 +238,8 @@ def validate_model(test_data, model, polymath):
     begin_label = argument_by_name(root, 'ab')
     end_label   = argument_by_name(root, 'ae')
 
-    begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_label.dynamic_axes[1], needs_gradient=True)
-    end_prediction = C.sequence.input_variable(1, sequence_axis=end_label.dynamic_axes[1], needs_gradient=True)
+    begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_label.dynamic_axes[1], needs_gradient=True, name='begin')
+    end_prediction = C.sequence.input_variable(1, sequence_axis=end_label.dynamic_axes[1], needs_gradient=True, name='end')
 
     best_span_score = symbolic_best_span(begin_prediction, end_prediction)
     predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
@@ -312,13 +317,8 @@ def get_answer(raw_text, tokens, start, end):
 def test(test_data, model_path, model_file, config_file):
     polymath = PolyMath(config_file)
     model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
-    begin_logits = model.outputs[0]
-    end_logits   = model.outputs[1]
-    loss         = C.as_composite(model.outputs[2].owner)
-    begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_logits.dynamic_axes[1], needs_gradient=True)
-    end_prediction = C.sequence.input_variable(1, sequence_axis=end_logits.dynamic_axes[1], needs_gradient=True)
-    best_span_score = symbolic_best_span(begin_prediction, end_prediction)
-    predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
+    loss         = C.as_composite(model.outputs[1].owner)
+    output       = model.output[0]
 
     batch_size = 32 # in sequences
     misc = {'rawctx':[], 'ctoken':[], 'answer':[], 'uid':[]}
@@ -326,15 +326,9 @@ def test(test_data, model_path, model_file, config_file):
     results = {}
     with open('{}_out.json'.format(model_file), 'w', encoding='utf-8') as json_output:
         for data in tsv_reader:
-            out = model.eval(data, outputs=[begin_logits,end_logits,loss], as_numpy=False)
-            g = best_span_score.grad({begin_prediction:out[begin_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
-            other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
-            span = predicted_span.eval((other_input_map))
+            out = model.eval(data, outputs=[output,loss], as_numpy=False)
             for seq, (raw_text, ctokens, answer, uid) in enumerate(zip(misc['rawctx'], misc['ctoken'], misc['answer'], misc['uid'])):
-                seq_where = np.argwhere(span[seq])[:,0]
-                span_begin = np.min(seq_where)
-                span_end = np.max(seq_where)
-                predict_answer = get_answer(raw_text, ctokens, span_begin, span_end)
+                predict_answer = output
                 results['query_id'] = int(uid)
                 results['answers'] = [predict_answer]
                 json.dump(results, json_output)

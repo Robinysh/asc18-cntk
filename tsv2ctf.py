@@ -47,8 +47,6 @@ def populate_dicts(files):
             if wdcnt[word] >= 1 or test_wdcnt[word] >= 1: # polymath adds word to dict regardless of word_count_threshold when it's in GloVe
                 _ = vocab[word]
     # add start and end token to vocab
-    _ = vocab["<s>"]
-    _ = vocab["</s>"]
     known =len(vocab)
 
     # add the special markers
@@ -60,8 +58,6 @@ def populate_dicts(files):
     #finally add all words that are not in yet
     _  = [vocab[word] for word in wdcnt if word not in vocab and wdcnt[word] > word_count_threshold]
     _  = [chars[c]    for c    in chcnt if c    not in chars and chcnt[c]    > char_count_threshold]
-    _  = chars['<']
-    _  = chars['>']
     # return as defaultdict(int) so that new keys will return 0 which is the value for <unknown>
     return known, defaultdict(int, vocab), defaultdict(int, chars)
 
@@ -74,7 +70,6 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
         raw_answer = ''
     else:
         uid, title, context, query, answer, raw_context, begin_answer, end_answer, raw_answer = line.split('\t')
-        raw_answer = '<s> '+raw_answer+' </s>'
         #uid, title, context, query, begin_answer, end_answer, answer = line.split('\t')
 
     ctokens = context.split(' ')
