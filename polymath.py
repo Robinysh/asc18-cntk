@@ -326,7 +326,7 @@ class PolyMath:
         outputs = self.output_layer(mod_context, aw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
         #test_output, train_logits = self.output_layer(mod_context, aw)
-
+        train_logits = print_node(train_logits)
         seq_loss = self.create_criterion_function()
     
         loss = seq_loss(train_logits, aw) #TODO Feed onehot answer into it
