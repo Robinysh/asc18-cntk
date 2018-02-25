@@ -131,6 +131,8 @@ def tsv_to_ctf(f, g, vocab, chars, is_test):
                 else:
                     out.append('|agw {}:{}'.format(awid, 1))
                     out.append('|anw {}:{}'.format(0, 0))
+                out.append('|aw {}:{}'.format(awid, 1))
+
             if ccid is not None:
                 outc = ' '.join(['%d' % c for c in ccid+[0]*max(word_size - len(ccid), 0)])
                 out.append('|cc %s' % outc)

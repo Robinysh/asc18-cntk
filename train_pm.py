@@ -136,7 +136,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
     if C.Communicator.num_workers() > 1:
         learner = C.data_parallel_distributed_learner(learner)
 
-    trainer = C.Trainer(z, (loss, None), learner, progress_writers)
+    trainer = C.Trainer(z, loss , learner, progress_writers)
 
     if profiling:
         C.debugging.start_profiler(sync_gpu=True)

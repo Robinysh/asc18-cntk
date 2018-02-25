@@ -273,14 +273,17 @@ class PolyMath:
             return model_greedy
         
         s2smodel = create_model()
+      
+        modelpar = create_model_train(s2smodel)
+   #     print(modelpar.parameters)
         # create the training wrapper for the s2smodel, as well as the criterion function
-        model_train = create_model_train(s2smodel)(mod_context, a_onehot)
+        model_train = modelpar(mod_context, a_onehot)
         # also wire in a greedy decoder so that we can properly log progress on a validation example
         # This is not used for the actual training process.
         model_greedy = create_model_greedy(s2smodel)(mod_context)
 
         #C.combine([model_greedy, model_train]),
-        return C.as_block(
+        return modelpar, C.as_block(
             C.combine((model_train, model_greedy)),
             [(mod_context, modeling_context), (a_onehot, aw)],
             'attention_layer',
@@ -323,12 +326,12 @@ class PolyMath:
         mod_context = self.modeling_layer(att_context) 
         # output layer
         #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
-        outputs = self.output_layer(mod_context, aw)
+        s2smodel, outputs = self.output_layer(mod_context, aw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
         #test_output, train_logits = self.output_layer(mod_context, aw)
-        train_logits = print_node(train_logits)
+
+        print(s2smodel.parameters)
         seq_loss = self.create_criterion_function()
-    
         loss = seq_loss(train_logits, aw) #TODO Feed onehot answer into it
 
         # loss
@@ -336,4 +339,4 @@ class PolyMath:
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return test_output, loss
+        return s2smodel, loss
