@@ -145,7 +145,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
     train_data_ext = os.path.splitext(train_data_file)[-1].lower()
 
     model_file = os.path.join(model_path, model_name)
-    model = C.combine(list(z.outputs) + [loss.output])
+    model = C.combine(z.outputs + loss.outputs) #this is for validation only
 
     epoch_stat = {
         'best_val_err' : 100,

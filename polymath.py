@@ -329,14 +329,19 @@ class PolyMath:
         s2smodel, outputs = self.output_layer(mod_context, aw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
         #test_output, train_logits = self.output_layer(mod_context, aw)
+        print(outputs)
+        print(train_logits)
+        print(test_output)
 
-        print(s2smodel.parameters)
+#        print(mod_context.parameters + s2smodel.parameters)
+        newm  = s2smodel + mod_context
+#        print(newm.parameters)
         seq_loss = self.create_criterion_function()
         loss = seq_loss(train_logits, aw) #TODO Feed onehot answer into it
-
+       
         # loss
         #start_loss = seq_loss(start_logits)
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return s2smodel, loss
+        return newm, loss
