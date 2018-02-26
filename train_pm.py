@@ -31,7 +31,7 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
                 context_ng_words = C.io.StreamDef('cnw', shape=polymath.wn_dim,     is_sparse=True),
                 query_ng_words   = C.io.StreamDef('qnw', shape=polymath.wn_dim,     is_sparse=True),
                 answer_ng_words  = C.io.StreamDef('anw', shape=polymath.wn_dim,     is_sparse=True),
-                answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size,     is_sparse=True),
+                answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size+2,     is_sparse=True),
                 context_chars    = C.io.StreamDef('cc',  shape=polymath.word_size,  is_sparse=False),
                 query_chars      = C.io.StreamDef('qc',  shape=polymath.word_size,  is_sparse=False),
                 answer_chars     = C.io.StreamDef('ac',  shape=polymath.word_size,  is_sparse=False))),
@@ -85,9 +85,9 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                 context_ng_words = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in cwids] for cwids in batch['cwids']], polymath.wn_dim)
                 query_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in qwids] for qwids in batch['qwids']], polymath.wg_dim)
                 query_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in qwids] for qwids in batch['qwids']], polymath.wn_dim)
-                answer_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in awids] for awids in batch['awids']], polymath.wg_dim)
-                answer_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in awids] for awids in batch['awids']], polymath.wn_dim)
-                answer_words   = C.Value.one_hot([[i for i in awids] for awids in batch['awids']], polymath.vocab_size+2)
+                answer_g_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in awids] for awids in batch['awids']], polymath.wg_dim)
+                answer_ng_words  = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in awids] for awids in batch['awids']], polymath.wn_dim)
+                answer_words     = C.Value.one_hot([[i for i in awids] for awids in batch['awids']], polymath.vocab_size+2)
                 context_chars = [np.asarray([[[c for c in cc+[0]*max(0,polymath.word_size-len(cc))]] for cc in ccid], dtype=np.float32) for ccid in batch['ccids']]
                 query_chars   = [np.asarray([[[c for c in qc+[0]*max(0,polymath.word_size-len(qc))]] for qc in qcid], dtype=np.float32) for qcid in batch['qcids']]
                 answer_chars   = [np.asarray([[[c for c in ac+[0]*max(0,polymath.word_size-len(ac))]] for ac in acid], dtype=np.float32) for acid in batch['acids']]
@@ -189,8 +189,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
         return True
 
     if train_data_ext == '.ctf':
-        mb_source, input_map = create_mb_and_map(loss, train_data_file, polymath)
-
+        mb_source, input_map = create_mb_and_map(loss, train_data_file, polymath) 
         minibatch_size = training_config['minibatch_size'] # number of samples
         epoch_size = training_config['epoch_size']
 

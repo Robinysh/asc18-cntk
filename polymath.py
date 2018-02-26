@@ -35,8 +35,6 @@ class PolyMath:
 
         self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+2, sparse_output=self.use_sparse)
         self.sentence_end_index = self.vocab_size+1
-        #self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32), name='start')
-        #self.sentence_end_index = self.vocab['</s>']
         self.sentence_max_length = 64
 
         print('dropout', self.dropout)
@@ -282,7 +280,6 @@ class PolyMath:
         # This is not used for the actual training process.
         model_greedy = create_model_greedy(s2smodel)(mod_context)
 
-        #C.combine([model_greedy, model_train]),
         return modelpar, C.as_block(
             C.combine((model_train, model_greedy)),
             [(mod_context, modeling_context), (a_onehot, aw)],
@@ -325,23 +322,11 @@ class PolyMath:
         # modeling layer
         mod_context = self.modeling_layer(att_context) 
         # output layer
-        #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
         s2smodel, outputs = self.output_layer(mod_context, aw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
-        #test_output, train_logits = self.output_layer(mod_context, aw)
-        print(outputs)
-        print(train_logits)
-        print(test_output)
 
-#        print(mod_context.parameters + s2smodel.parameters)
         newm  = s2smodel + mod_context
-#        print(newm.parameters)
         seq_loss = self.create_criterion_function()
-        loss = seq_loss(train_logits, aw) #TODO Feed onehot answer into it
+        loss = seq_loss(train_logits, aw)
        
-        # loss
-        #start_loss = seq_loss(start_logits)
-        #end_loss = seq_loss(end_logits)
-        #paper_loss = start_loss + end_loss
-        #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
         return newm, loss
