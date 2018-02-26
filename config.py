@@ -18,7 +18,7 @@ model_config = {
 }
 
 training_config = {
-    'minibatch_size'    : 8192,    # in samples when using ctf reader, per worker
+    'minibatch_size'    : 100,    # in samples when using ctf reader, per worker
     'epoch_size'        : 82325,   # in sequences, when using ctf reader
     'log_freq'          : 500,     # in minibatchs
     'max_epochs'        : 300,

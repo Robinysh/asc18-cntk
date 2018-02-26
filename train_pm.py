@@ -27,28 +27,22 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
             C.io.StreamDefs(
                 context_g_words  = C.io.StreamDef('cgw', shape=polymath.wg_dim,     is_sparse=True),
                 query_g_words    = C.io.StreamDef('qgw', shape=polymath.wg_dim,     is_sparse=True),
-                answer_g_words   = C.io.StreamDef('agw', shape=polymath.wg_dim,     is_sparse=True),
                 context_ng_words = C.io.StreamDef('cnw', shape=polymath.wn_dim,     is_sparse=True),
                 query_ng_words   = C.io.StreamDef('qnw', shape=polymath.wn_dim,     is_sparse=True),
-                answer_ng_words  = C.io.StreamDef('anw', shape=polymath.wn_dim,     is_sparse=True),
-                answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size,     is_sparse=True),
+                answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size + 2,     is_sparse=True),
                 context_chars    = C.io.StreamDef('cc',  shape=polymath.word_size,  is_sparse=False),
-                query_chars      = C.io.StreamDef('qc',  shape=polymath.word_size,  is_sparse=False),
-                answer_chars     = C.io.StreamDef('ac',  shape=polymath.word_size,  is_sparse=False))),
+                query_chars      = C.io.StreamDef('qc',  shape=polymath.word_size,  is_sparse=False))),
         randomize=randomize,
         max_sweeps=C.io.INFINITELY_REPEAT if repeat else 1)
 
     input_map = {
         argument_by_name(func, 'cgw'): mb_source.streams.context_g_words,
         argument_by_name(func, 'qgw'): mb_source.streams.query_g_words,
-        argument_by_name(func, 'agw'): mb_source.streams.answer_g_words,
         argument_by_name(func, 'cnw'): mb_source.streams.context_ng_words,
         argument_by_name(func, 'qnw'): mb_source.streams.query_ng_words,
-        argument_by_name(func, 'anw'): mb_source.streams.answer_ng_words,
         argument_by_name(func, 'aw' ): mb_source.streams.answer_words,
         argument_by_name(func, 'cc' ): mb_source.streams.context_chars,
-        argument_by_name(func, 'qc' ): mb_source.streams.query_chars,
-        argument_by_name(func, 'ac' ): mb_source.streams.query_chars
+        argument_by_name(func, 'qc' ): mb_source.streams.query_chars
     }
     return mb_source, input_map
 
@@ -124,12 +118,12 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
     lr = C.learning_parameter_schedule(training_config['lr'], minibatch_size=None, epoch_size=None)
 
     ema = {}
-    dummies = []
+#    dummies = []
     for p in z.parameters:
         ema_p = C.constant(0, shape=p.shape, dtype=p.dtype, name='ema_%s' % p.uid)
         ema[p.uid] = ema_p
-        dummies.append(C.reduce_sum(C.assign(ema_p, 0.999 * ema_p + 0.001 * p)))
-    dummy = C.combine(dummies)
+#        dummies.append(C.reduce_sum(C.assign(ema_p, 0.999 * ema_p + 0.001 * p)))
+#    dummy = C.combine(dummies)
 
     learner = C.adadelta(z.parameters, lr)
 
@@ -204,7 +198,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
 
                 trainer.train_minibatch(data)
                 num_seq += trainer.previous_minibatch_sample_count
-                dummy.eval()
+ #               dummy.eval()
                 if num_seq >= epoch_size:
                     break
             if not post_epoch_work(epoch_stat):
@@ -221,7 +215,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
             for data in tsv_reader:
                 if (minibatch_count % C.Communicator.num_workers()) == C.Communicator.rank():
                     trainer.train_minibatch(data) # update model with it
-                    dummy.eval()
+#                    dummy.eval()
                 minibatch_count += 1
             if not post_epoch_work(epoch_stat):
                 break

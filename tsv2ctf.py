@@ -125,12 +125,12 @@ def tsv_to_ctf(f, g, vocab, chars, is_test):
                     out.append('|qgw {}:{}'.format(qwid, 1))
                     out.append('|qnw {}:{}'.format(0, 0))
             if awid is not None:
-                if awid >= known:
-                    out.append('|agw {}:{}'.format(0, 0))
-                    out.append('|anw {}:{}'.format(awid - known, 1))
-                else:
-                    out.append('|agw {}:{}'.format(awid, 1))
-                    out.append('|anw {}:{}'.format(0, 0))
+#                if awid >= known:
+#                    out.append('|agw {}:{}'.format(0, 0))
+#                    out.append('|anw {}:{}'.format(awid - known, 1))
+#                else:
+#                    out.append('|agw {}:{}'.format(awid, 1))
+#                    out.append('|anw {}:{}'.format(0, 0))
                 out.append('|aw {}:{}'.format(awid, 1))
 
             if ccid is not None:

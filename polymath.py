@@ -31,7 +31,7 @@ class PolyMath:
         self.highway_layers = model_config['highway_layers']
         self.two_step = model_config['two_step']
         self.use_cudnn = model_config['use_cudnn']
-        self.use_sparse = True
+        self.use_sparse = False
 
         self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+2, sparse_output=self.use_sparse)
         self.sentence_end_index = self.vocab_size+1
@@ -66,16 +66,16 @@ class PolyMath:
             return C.times(wg, glove) + C.times(wn, nonglove)
         return func
 
-    def input_layer(self,cgw,cnw,cc,qgw,qnw,qc,agw,anw,ac):
+    def input_layer(self,cgw,cnw,cc,qgw,qnw,qc):
         cgw_ph = C.placeholder()
         cnw_ph = C.placeholder()
         cc_ph  = C.placeholder()
         qgw_ph = C.placeholder()
         qnw_ph = C.placeholder()
         qc_ph  = C.placeholder()
-        agw_ph = C.placeholder()
-        anw_ph = C.placeholder()
-        ac_ph  = C.placeholder()
+   #     agw_ph = C.placeholder()
+   #     anw_ph = C.placeholder()
+   #     ac_ph  = C.placeholder()
         
         input_chars = C.placeholder(shape=(1,self.word_size,self.c_dim))
         input_glove_words = C.placeholder(shape=(self.wg_dim,))
@@ -92,16 +92,16 @@ class PolyMath:
         
         qce = C.one_hot(qc_ph, num_classes=self.c_dim, sparse_output=self.use_sparse)
         cce = C.one_hot(cc_ph, num_classes=self.c_dim, sparse_output=self.use_sparse)
-        ace = C.one_hot(ac_ph, num_classes=self.c_dim, sparse_output=self.use_sparse)
+#        ace = C.one_hot(ac_ph, num_classes=self.c_dim, sparse_output=self.use_sparse)
                 
         q_processed = processed.clone(C.CloneMethod.share, {input_chars:qce, input_glove_words:qgw_ph, input_nonglove_words:qnw_ph})
         c_processed = processed.clone(C.CloneMethod.share, {input_chars:cce, input_glove_words:cgw_ph, input_nonglove_words:cnw_ph})
-        a_processed = processed.clone(C.CloneMethod.share, {input_chars:ace, input_glove_words:agw_ph, input_nonglove_words:anw_ph})
+   #     a_processed = processed.clone(C.CloneMethod.share, {input_chars:ace, input_glove_words:agw_ph, input_nonglove_words:anw_ph})
         #a_processed = C.pad(a_processed, pattern=[(0,0),(0,0),(0,2)], mode=C.ops.CONSTANT_PAD, constant_value=0)        
 
         return C.as_block(
-            C.combine([c_processed, q_processed, a_processed]),
-            [(cgw_ph, cgw),(cnw_ph, cnw),(cc_ph, cc),(qgw_ph, qgw),(qnw_ph, qnw),(qc_ph, qc),(agw_ph, agw),(anw_ph, anw),(ac_ph, ac)],
+            C.combine([c_processed, q_processed]),
+            [(cgw_ph, cgw),(cnw_ph, cnw),(cc_ph, cc),(qgw_ph, qgw),(qnw_ph, qnw),(qc_ph, qc)],
             'input_layer',
             'input_layer')
         
@@ -198,6 +198,7 @@ class PolyMath:
             # Create multiple layers of LSTMs by passing the output of the i-th layer
             # to the (i+1)th layer as its input
             # Note: We go_backwards for the plain model, but forward for the attention model.
+
             """
             with C.layers.default_options(enable_self_stabilization=True, go_backwards=False):
                 LastRecurrence = C.layers.Recurrence
@@ -283,7 +284,7 @@ class PolyMath:
         model_greedy = create_model_greedy(s2smodel)(mod_context)
 
         #C.combine([model_greedy, model_train]),
-        return modelpar, C.as_block(
+        return C.as_block(
             C.combine((model_train, model_greedy)),
             [(mod_context, modeling_context), (a_onehot, aw)],
             'attention_layer',
@@ -309,15 +310,16 @@ class PolyMath:
         cnw = C.input_variable(self.wn_dim, dynamic_axes=[b,c], is_sparse=self.use_sparse, name='cnw')
         qgw = C.input_variable(self.wg_dim, dynamic_axes=[b,q], is_sparse=self.use_sparse, name='qgw')
         qnw = C.input_variable(self.wn_dim, dynamic_axes=[b,q], is_sparse=self.use_sparse, name='qnw')
-        agw = C.input_variable(self.wg_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='agw')
-        anw = C.input_variable(self.wn_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='anw')
-        aw = C.input_variable(self.vocab_size+2, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='aw')
+ #       agw = C.input_variable(self.wg_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='agw')
+ #       anw = C.input_variable(self.wn_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='anw')
+        aw = C.input_variable(self.vocab_size+2, dynamic_axes=[b,a], is_sparse=False, name='aw')
+      #  aw = C.sequence.input_variable(self.vocab_size+2, is_sparse=False, sequence_axis = a ,name = 'aw')
         cc = C.input_variable((1,self.word_size), dynamic_axes=[b,c], name='cc')
         qc = C.input_variable((1,self.word_size), dynamic_axes=[b,q], name='qc')
-        ac = C.input_variable((1,self.word_size), dynamic_axes=[b,a], name='ac')
+#        ac = C.input_variable((1,self.word_size), dynamic_axes=[b,a], name='ac')
 
         #input layer
-        c_processed, q_processed, a_processed = self.input_layer(cgw,cnw,cc,qgw,qnw,qc,agw,anw,ac).outputs
+        c_processed, q_processed = self.input_layer(cgw,cnw,cc,qgw,qnw,qc).outputs
         
         # attention layer
         att_context = self.attention_layer(c_processed, q_processed)
@@ -326,15 +328,15 @@ class PolyMath:
         mod_context = self.modeling_layer(att_context) 
         # output layer
         #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
-        s2smodel, outputs = self.output_layer(mod_context, aw)
+        outputs = self.output_layer(mod_context, aw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
         #test_output, train_logits = self.output_layer(mod_context, aw)
-        print(outputs)
-        print(train_logits)
+        print(outputs.parameters)
+        print(mod_context.parameters)
         print(test_output)
 
 #        print(mod_context.parameters + s2smodel.parameters)
-        newm  = s2smodel + mod_context
+      #  newm  = s2smodel + mod_context
 #        print(newm.parameters)
         seq_loss = self.create_criterion_function()
         loss = seq_loss(train_logits, aw) #TODO Feed onehot answer into it
@@ -344,4 +346,4 @@ class PolyMath:
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return newm, loss
+        return outputs, loss
