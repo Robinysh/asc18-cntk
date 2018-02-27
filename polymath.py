@@ -295,8 +295,8 @@ class PolyMath:
         def criterion(input, labels):
             # criterion function must drop the <s> from the labels
             #postprocessed_labels = C.sequence.slice(labels, 1, 0) # <s> A B C </s> --> A B C </s>
-            ce = C.cross_entropy_with_softmax(input, labels)
-            errs = C.classification_error(input, labels)
+            ce = C.cross_entropy_with_softmax(input, labels, name='loss')
+            errs = C.classification_error(input, labels, name='NumOfDiffWords')
             return (ce, errs)
 
         return criterion

@@ -8,6 +8,7 @@ import argparse
 import importlib
 import time
 import json
+import pickle
 
 model_name = "pm.model"
 
@@ -99,11 +100,11 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
             else:
                 yield {} # need to generate empty batch for distributed training
 
-def train(data_path, model_path, log_file, config_file, restore=False, profiling=False, gen_heartbeat=False):
+def train(i2w, data_path, model_path, log_file, config_file, restore=False, profiling=False, gen_heartbeat=False):
     polymath = PolyMath(config_file)
     z, loss = polymath.model()
     training_config = importlib.import_module(config_file).training_config
-
+    
     max_epochs = training_config['max_epochs']
     log_freq = training_config['log_freq']
 
@@ -140,6 +141,11 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
 
     model_file = os.path.join(model_path, model_name)
     model = C.combine(z.outputs + loss.outputs) #this is for validation only
+    print(model)
+    print(model.outputs[0])
+    print(model.outputs[1])
+    print(model.outputs[2])
+    print(model.outputs[3])
 
     epoch_stat = {
         'best_val_err' : 100,
@@ -162,7 +168,7 @@ def train(data_path, model_path, log_file, config_file, restore=False, profiling
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             #TODO replace with rougel with external script(possibly)
-            #val_err = validate_model(os.path.join(data_path, training_config['val_data']), model, polymath)
+            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
             #if epoch_stat['best_val_err'] > val_err:
             #    epoch_stat['best_val_err'] = val_err
             #    epoch_stat['best_since'] = 0
@@ -227,68 +233,116 @@ def symbolic_best_span(begin, end):
     running_max_begin = C.layers.Recurrence(C.element_max, initial_state=-float("inf"))(begin)
     return C.layers.Fold(C.element_max, initial_state=C.constant(-1e+30))(running_max_begin + end)
 
-def validate_model(test_data, model, polymath):
-    begin_logits = model.outputs[0]
-    end_logits   = model.outputs[1]
+def validate_model(i2w, test_data, model, polymath):
+#    begin_logits = model.outputs[0]
+#    end_logits   = model.outputs[1]
+#    sparse_to_dense = create_sparse_to_dense(polymath.vocab_size)
     loss         = model.outputs[2]
+    print(loss)
+    testout = model.outputs[1]  # according to model.shape
+    print(testout)
     root = C.as_composite(loss.owner)
+    onehot = argument_by_name(root, 'aw')
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
-    begin_label = argument_by_name(root, 'ab')
-    end_label   = argument_by_name(root, 'ae')
+#    begin_label = argument_by_name(root, 'ab')
+#    end_label   = argument_by_name(root, 'ae')
+#    onehot = argument_by_name(root, 'aw')
 
-    begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_label.dynamic_axes[1], needs_gradient=True, name='begin')
-    end_prediction = C.sequence.input_variable(1, sequence_axis=end_label.dynamic_axes[1], needs_gradient=True, name='end')
+#    begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_label.dynamic_axes[1], needs_gradient=True, name='begin')
+#    end_prediction = C.sequence.input_variable(1, sequence_axis=end_label.dynamic_axes[1], needs_gradient=True, name='end')
+#    pred_out = C.sequence.input_variable(polymath.vocab_size + 2 , sequence_axis=onehot.dynamic_axes[1], needs_gradient=True, name='predout')
+#    best_span_score = symbolic_best_span(begin_prediction, end_prediction)
+    
+#    predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
+#    true_span = C.layers.Recurrence(C.plus)(begin_label - C.sequence.past_value(end_label))
+#    common_span = C.element_min(predicted_span, true_span)
 
-    best_span_score = symbolic_best_span(begin_prediction, end_prediction)
-    predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
-    true_span = C.layers.Recurrence(C.plus)(begin_label - C.sequence.past_value(end_label))
-    common_span = C.element_min(predicted_span, true_span)
-
-    predicted_len = C.sequence.reduce_sum(predicted_span)
-    true_len = C.sequence.reduce_sum(true_span)
-    common_len = C.sequence.reduce_sum(common_span)
-    f1 = 2*common_len/(predicted_len+true_len)
-    exact_match = C.element_min(begin_match, end_match)
-    precision = common_len/predicted_len
-    recall = common_len/true_len
-    overlap = C.greater(common_len, 0)
-    s = lambda x: C.reduce_sum(x, axis=C.Axis.all_axes())
-    stats = C.splice(s(f1), s(exact_match), s(precision), s(recall), s(overlap), s(begin_match), s(end_match))
-
+ #   predicted_len = C.sequence.reduce_sum(predicted_span)
+ #   true_len = C.sequence.reduce_sum(true_span)
+ #   common_len = C.sequence.reduce_sum(common_span)
+ #   f1 = 2*common_len/(predicted_len+true_len)
+ #   exact_match = C.element_min(begin_match, end_match)
+ #   precision = common_len/predicted_len
+ #   recall = common_len/true_len
+ #   overlap = C.greater(common_len, 0)
+ #   s = lambda x: C.reduce_sum(x, axis=C.Axis.all_axes())
+ #   stats = C.splice(s(f1), s(exact_match), s(precision), s(recall), s(overlap), s(begin_match), s(end_match))
+    
     # Evaluation parameters
-    minibatch_size = 8192
+    minibatch_size = 1024
     num_sequences = 0
 
-    stat_sum = 0
+    stat = []
     loss_sum = 0
-
+    i=0
     while True:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
-        if not data or not (begin_label in data) or data[begin_label].num_sequences == 0:
+        if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
-        out = model.eval(data, outputs=[begin_logits,end_logits,loss], as_numpy=False)
+        out = model.eval(data, outputs=[onehot,loss], as_numpy=False)
         testloss = out[loss]
-        g = best_span_score.grad({begin_prediction:out[begin_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
-        other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction], begin_label: data[begin_label], end_label: data[end_label]}
-        stat_sum += stats.eval((other_input_map))
+ #       outputs = format_sequences(testout, i2w)
+        print(testloss)
+        print(onehot)
+        output = ['a']
+        realout  = format_sequences(onehot, i2w)
+        print('1')
+        if i == 0:
+            print(outputs)
+            print(realout)
+            i=i+1 
+             
+#        num_total += len(outputs)
+#        num_wrong += sum([label != output for output, label in zip(outputs, realout)])
+        stat.append(len(outputs) / sum([label != output for output, label in zip(outputs, realout)]))
+        print('2')
+#        g = best_span_score.grad({begin_prediction:out[begin_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
+#        other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction], begin_label: data[begin_label], end_label: data[end_label]}
+#        stat_sum += stats.eval((other_input_map))
         loss_sum += np.sum(testloss.asarray())
-        num_sequences += data[begin_label].num_sequences
-
-    stat_avg = stat_sum / num_sequences
+        num_sequences += data[onehot].num_sequences
+        print('3')
+#    stat_avg = stat_sum / num_sequences
     loss_avg = loss_sum / num_sequences
-
-    print("Validated {} sequences, loss {:.4f}, F1 {:.4f}, EM {:.4f}, precision {:4f}, recall {:4f} hasOverlap {:4f}, start_match {:4f}, end_match {:4f}".format(
+    print(stat)
+    print("Validated {} sequences, loss {:.4f}".format(
             num_sequences,
-            loss_avg,
-            stat_avg[0],
-            stat_avg[1],
-            stat_avg[2],
-            stat_avg[3],
-            stat_avg[4],
-            stat_avg[5],
-            stat_avg[6]))
+            loss_avg))
 
     return loss_avg
+
+def create_sparse_to_dense(input_vocab_dim):
+    I = C.Constant(np.eye(input_vocab_dim))
+    @C.Function
+    @C.layers.Signature(InputSequence[C.layers.SparseTensor[input_vocab_dim]])
+    def no_op(input):
+        return C.times(input, I)
+    return no_op
+
+def get_vocab(path):
+    # get the vocab for printing output sequences in plaintext
+#    vocab = [w.strip() for w in open(path).readlines()]
+#    i2w = { i:w for i,w in enumerate(vocab) }
+#    w2i = { w:i for i,w in enumerate(vocab) }
+    with open(path, 'rb') as vf:
+           known, vocab, chars = pickle.load(vf)
+    i2w = { i:w for i,w in enumerate(vocab) }
+    return i2w
+
+def format_sequences(sequences, i2w):
+    print(sequences)
+    out = []
+    
+    for w in sequences:
+        print(w)
+        x =  np.argmax(w) 
+        print(x)
+        if x < 127810:
+            out.append(i2w[x])
+#    for w in sequences:
+#        print(w)
+    return [" ".join(out)]
+
 
 # map from token to char offset
 def w2c_map(s, words):
@@ -312,11 +366,11 @@ def get_answer(raw_text, tokens, start, end):
         import pdb
         pdb.set_trace()
 
-def test(test_data, model_path, model_file, config_file):
+def test(i2w ,test_data, model_path, model_file, config_file):
     polymath = PolyMath(config_file)
     model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
-    loss         = C.as_composite(model.outputs[1].owner)
-    output       = model.output[0]
+    loss         = C.as_composite(model.outputs[2].owner)
+    output       = model.outputs[1]
 
     batch_size = 32 # in sequences
     misc = {'rawctx':[], 'ctoken':[], 'answer':[], 'uid':[]}
@@ -364,11 +418,15 @@ if __name__=='__main__':
 
     test_data = args['test']
     test_model = args['model']
+    
+    pickle_file = os.path.join(abs_path, 'vocabs.pkl')
+    i2w  = get_vocab(pickle_file)
+#    print(i2w)
     if test_data:
-        test(test_data, model_path, test_model, args['config'])
+        test(i2w, test_data, model_path, test_model, args['config'])
     else:
         try:
-            train(data_path, model_path, args['logdir'], args['config'],
+            train(i2w, data_path, model_path, args['logdir'], args['config'],
                 restore = not args['restart'],
                 profiling = args['profile'],
                 gen_heartbeat = args['genheartbeat'])
