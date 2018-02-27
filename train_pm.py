@@ -237,26 +237,33 @@ def validate_model(i2w, test_data, model, polymath):
 #    begin_logits = model.outputs[0]
 #    end_logits   = model.outputs[1]
 #    sparse_to_dense = create_sparse_to_dense(polymath.vocab_size)
-    loss         = model.outputs[2]
+    loss = model.outputs[2]
     print(loss)
     testout = model.outputs[1]  # according to model.shape
     print(testout)
     root = C.as_composite(loss.owner)
-    onehot = argument_by_name(root, 'aw')
+ 
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
-#    begin_label = argument_by_name(root, 'ab')
-#    end_label   = argument_by_name(root, 'ae')
-#    onehot = argument_by_name(root, 'aw')
 
-#    begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_label.dynamic_axes[1], needs_gradient=True, name='begin')
-#    end_prediction = C.sequence.input_variable(1, sequence_axis=end_label.dynamic_axes[1], needs_gradient=True, name='end')
-#    pred_out = C.sequence.input_variable(polymath.vocab_size + 2 , sequence_axis=onehot.dynamic_axes[1], needs_gradient=True, name='predout')
-#    best_span_score = symbolic_best_span(begin_prediction, end_prediction)
-    
-#    predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
-#    true_span = C.layers.Recurrence(C.plus)(begin_label - C.sequence.past_value(end_label))
-#    common_span = C.element_min(predicted_span, true_span)
+    onehot = argument_by_name(root, 'aw')
 
+#    pred_out = C.sequence.input_variable(polymath.vocab_size + 2 , sequence_axis=onehot.dynamic_axes[1], name='predout')
+    '''
+    @C.Function
+    def format_sequences(sequences:C.layers.typing.SequenceOver[C.Axis.default_dynamic_axis()][127812], i2w):
+        print(sequences)
+        out = []
+
+        for w in sequences:
+            print(w)
+            x =  np.argmax(w,axis = 1)
+            print(x)
+            if x < 127810:
+                out.append(i2w[x])
+#    for w in sequences:
+#        print(w)
+        return [" ".join(out)]    
+     '''
  #   predicted_len = C.sequence.reduce_sum(predicted_span)
  #   true_len = C.sequence.reduce_sum(true_span)
  #   common_len = C.sequence.reduce_sum(common_span)
@@ -269,7 +276,7 @@ def validate_model(i2w, test_data, model, polymath):
  #   stats = C.splice(s(f1), s(exact_match), s(precision), s(recall), s(overlap), s(begin_match), s(end_match))
     
     # Evaluation parameters
-    minibatch_size = 1024
+    minibatch_size = 1
     num_sequences = 0
 
     stat = []
@@ -279,16 +286,19 @@ def validate_model(i2w, test_data, model, polymath):
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
-        out = model.eval(data, outputs=[onehot,loss], as_numpy=False)
+        out = model.eval(data, outputs=[testout, loss], as_numpy=False)
         testloss = out[loss]
+        
  #       outputs = format_sequences(testout, i2w)
-        print(testloss)
+        print('test loss',testloss)
         print(onehot)
+        print(testout) 
+#        print(np.sum(loss.asarray()))
         output = ['a']
-        realout  = format_sequences(onehot, i2w)
+ #       realout  = format_sequences(sequences, i2w)
         print('1')
         if i == 0:
-            print(outputs)
+#            print(outputs)
             print(realout)
             i=i+1 
              
@@ -297,7 +307,7 @@ def validate_model(i2w, test_data, model, polymath):
         stat.append(len(outputs) / sum([label != output for output, label in zip(outputs, realout)]))
         print('2')
 #        g = best_span_score.grad({begin_prediction:out[begin_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
-#        other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction], begin_label: data[begin_label], end_label: data[end_label]}
+#        other_input_map = {pred_out: out[testout], end_prediction: data[onehot]}
 #        stat_sum += stats.eval((other_input_map))
         loss_sum += np.sum(testloss.asarray())
         num_sequences += data[onehot].num_sequences
@@ -310,7 +320,7 @@ def validate_model(i2w, test_data, model, polymath):
             loss_avg))
 
     return loss_avg
-
+'''
 def create_sparse_to_dense(input_vocab_dim):
     I = C.Constant(np.eye(input_vocab_dim))
     @C.Function
@@ -318,7 +328,7 @@ def create_sparse_to_dense(input_vocab_dim):
     def no_op(input):
         return C.times(input, I)
     return no_op
-
+'''
 def get_vocab(path):
     # get the vocab for printing output sequences in plaintext
 #    vocab = [w.strip() for w in open(path).readlines()]
@@ -328,21 +338,30 @@ def get_vocab(path):
            known, vocab, chars = pickle.load(vf)
     i2w = { i:w for i,w in enumerate(vocab) }
     return i2w
+'''
+def create_eval_func():
+    @C.Function
+    def evl_fun(predout, trueout):
 
-def format_sequences(sequences, i2w):
+
+        return 
+    return evl_fun
+
+@C.Function
+def format_sequences(sequences:C.layers.typing.SequenceOver[C.Axis.default_dynamic_axis()][127812], i2w):
     print(sequences)
     out = []
     
     for w in sequences:
         print(w)
-        x =  np.argmax(w) 
+        x =  np.argmax(w,axis = 1) 
         print(x)
         if x < 127810:
             out.append(i2w[x])
 #    for w in sequences:
 #        print(w)
     return [" ".join(out)]
-
+'''
 
 # map from token to char offset
 def w2c_map(s, words):
