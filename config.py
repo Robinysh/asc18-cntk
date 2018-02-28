@@ -6,20 +6,20 @@ data_config = {
 }
 
 model_config = {
-    'hidden_dim'     	: 50,
+    'hidden_dim'     	: 200,
     'num_layers'        : 2,
     'attention_dim'     : 2,
-    'char_convs'     	: 50,
+    'char_convs'     	: 200,
     'char_emb_dim'   	: 8,
-    'dropout'        	: 0.5,
+    'dropout'        	: 0.4,
     'highway_layers' 	: 2,
-    'two_step'          : False,
-    'use_cudnn'         : False,
+    'two_step'          : True,
+    'use_cudnn'         : True,
 }
 
 training_config = {
-    'minibatch_size'    : 32,    # in samples when using ctf reader, per worker
-    'epoch_size'        : 128,   # in sequences, when using ctf reader
+    'minibatch_size'    : 128,    # in samples when using ctf reader, per worker
+    'epoch_size'        : 44961,   # in sequences, when using ctf reader
     'log_freq'          : 100,     # in minibatchs
     'max_epochs'        : 300,
     'lr'                : 0.5,

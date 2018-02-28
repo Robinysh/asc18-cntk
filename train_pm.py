@@ -9,6 +9,7 @@ import importlib
 import time
 import json
 import pickle
+import rouge
 
 model_name = "pm.model"
 
@@ -138,22 +139,22 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
 
     model_file = os.path.join(model_path, model_name)
     model = C.combine(z.outputs + loss.outputs) #this is for validation only
-    print(model)
-    print(model.outputs[0])
-    print(model.outputs[1])
-    print(model.outputs[2])
-    print(model.outputs[3])
+#    print(model)
+#    print(model.outputs[0])
+#    print(model.outputs[1])
+#    print(model.outputs[2])
+#    print(model.outputs[3])
 
     epoch_stat = {
-        'best_val_err' : 100,
+        'best_val_err' : 1000,
         'best_since'   : 0,
         'val_since'    : 0}
-
-    if restore and os.path.isfile(model_file):
+    if restore and  os.path.isfile(model_file):
+  #  if restore and os.path.isfile(model_file):
         trainer.restore_from_checkpoint(model_file)
         #after restore always re-evaluate
         #TODO replace with rougel with external script(possibly)
-        #epoch_stat['best_val_err'] = validate_model(os.path.join(data_path, training_config['val_data']), model, polymath)
+        epoch_stat['best_val_err'] = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
 
     def post_epoch_work(epoch_stat):
         trainer.summarize_training_progress()
@@ -231,15 +232,10 @@ def symbolic_best_span(begin, end):
     return C.layers.Fold(C.element_max, initial_state=C.constant(-1e+30))(running_max_begin + end)
 
 def validate_model(i2w, test_data, model, polymath):
-
-
-
-#    pa  = model.outputs[0]
-#    sa  =  model.outputs[3]
+    RL = rouge.Rouge()
     loss = model.outputs[2]
-#    print(loss)
     testout = model.outputs[1]  # according to model.shape
-    print(testout)
+
     root = C.as_composite(loss.owner)
  
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
@@ -257,15 +253,15 @@ def validate_model(i2w, test_data, model, polymath):
  #   overlap = C.greater(common_len, 0)
  #   s = lambda x: C.reduce_sum(x, axis=C.Axis.all_axes())
  #   stats = C.splice(s(f1), s(exact_match), s(precision), s(recall), s(overlap), s(begin_match), s(end_match))
-    stat = C.argmax(onehot,0)
- #   pred_out = C.argmax(testout,-2)
+    one2num = C.argmax(onehot,0)
+#    pred_out = C.argmax(testout,0)
     # Evaluation parameters
-    minibatch_size = 32
+    minibatch_size = 16
     num_sequences = 0
 
-
+    stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
     loss_sum = 0
-    i=0
+
  #   tstt =     model.test(mb_source, minibatch_size=32, model_inputs_to_streams = input_map)
     print('ha')
  #   print(tstt)
@@ -274,42 +270,27 @@ def validate_model(i2w, test_data, model, polymath):
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
         out = model.eval(data, outputs=[testout, loss], as_numpy=True)
-#        testloss = out[loss]
-#        testout  = C.argmax(out[testout],0).eval()
-#        print(testout)
-#        print(outputs)
-#        true = format_sequences(onehot, i2w)
-#        true = stat.eval({onehot:data[onehot]})
-#        print(true)
-#        predout=pred_out.eval(data)
-#        print('predout',predout)
-        print('----------------------------------------')
-        print(testout) 
-#        print(np.sum(loss.asarray()))
-        output = ['a']
-#        predout  = format_sequences(out[testout], i2w)
-#        print('1')
-#        if i == 0:
-#            print(outputs)
-#            print(realout)
-#            i=i+1 
-             
-#        num_total += len(outputs)
-#        num_wrong += sum([label != output for output, label in zip(outputs, realout)])
-        stat.append(len(outputs) / sum([label != output for output, label in zip(outputs, realout)]))
-        print('2')
+        true = one2num.eval({onehot:data[onehot]})
+        true_text = format_sequences(np.asarray(true).reshape(-1).tolist(),i2w)
+#        print('true_text', true_text)
+        predout_text = format_sequences(np.asarray(out[testout]).reshape(-1), i2w)
+#        print('predout_text', predout_text)
+        testloss = out[loss]
+        stat += RL.calc_score(predout_text, true_text)
+#        print(testloss)
+#        print('2')
 #        g = best_span_score.grad({begin_prediction:out[begin_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
 #        other_input_map = {pred_out: out[testout], end_prediction: data[onehot]}
 #        stat_sum += stats.eval((other_input_map))
-        loss_sum += np.sum(testloss.asarray())
+        loss_sum += np.sum(np.asarray(testloss))
         num_sequences += data[onehot].num_sequences
-        print('3')
+#        print('3')
 #    stat_avg = stat_sum / num_sequences
     loss_avg = loss_sum / num_sequences
-    print(stat)
-    print("Validated {} sequences, loss {:.4f}".format(
+    stat_avg = stat / float(num_sequences)
+    print("Validated {} sequences, loss {:.4f}, RouL {:.4f}, LCS {:.4f}, RouL {:.4f}, LengCan {:.4f}, LenRef {:.4f}, prec, rec".format(
             num_sequences,
-            loss_avg))
+            loss_avg, stat_avg[0], stat_avg[1], stat_avg[2], stat_avg[3], stat_avg[4], stat_avg[5]))
 
     return loss_avg
 '''
@@ -341,18 +322,11 @@ def create_eval_func():
 '''
 
 def format_sequences(sequences, i2w):
-    print(sequences)
- 
- #       out =  np.argmax(sequences,axis = 1)   
-    for w in sequences:
- #       print(w)
-        x =  np.argmax(w,axis = 1) 
-        print(x)
-        if x < 127810:
-            out.append(i2w[x])
-#    for w in sequences:
-#        print(w)
-        return [" ".join(out)]
+    out =  [] 
+    for w in sequences: 
+        if w < 127810:
+            out.append(i2w[w])
+    return " ".join(out)
 
 
 # map from token to char offset
