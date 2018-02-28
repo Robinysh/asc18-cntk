@@ -37,7 +37,7 @@ class PolyMath:
         self.sentence_end_index = self.vocab_size+1
         #self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32), name='start')
         #self.sentence_end_index = self.vocab['</s>']
-        self.sentence_max_length = 64
+        self.sentence_max_length = 1
 
         print('dropout', self.dropout)
         print('use_cudnn', self.use_cudnn)
@@ -53,7 +53,7 @@ class PolyMath:
     def embed(self):
         # load glove
         npglove = np.zeros((self.wg_dim, self.hidden_dim), dtype=np.float32)
-        with open(os.path.join(self.abs_path, 'glove.6B.100d.txt'), encoding='utf-8') as f:
+        with open(os.path.join(self.abs_path, 'glove.6B.50d.txt'), encoding='utf-8') as f:
             for line in f:
                 parts = line.split()
                 word = parts[0].lower()
@@ -306,10 +306,10 @@ class PolyMath:
         q = C.Axis.new_unique_dynamic_axis('q')
         a = C.Axis.new_unique_dynamic_axis('a')
         b = C.Axis.default_batch_axis()
-        cgw = C.input_variable(self.wg_dim, dynamic_axes=[b,c], is_sparse=self.use_sparse, name='cgw')
-        cnw = C.input_variable(self.wn_dim, dynamic_axes=[b,c], is_sparse=self.use_sparse, name='cnw')
-        qgw = C.input_variable(self.wg_dim, dynamic_axes=[b,q], is_sparse=self.use_sparse, name='qgw')
-        qnw = C.input_variable(self.wn_dim, dynamic_axes=[b,q], is_sparse=self.use_sparse, name='qnw')
+        cgw = C.input_variable(self.wg_dim, dynamic_axes=[b,c], is_sparse=True, name='cgw')
+        cnw = C.input_variable(self.wn_dim, dynamic_axes=[b,c], is_sparse=True, name='cnw')
+        qgw = C.input_variable(self.wg_dim, dynamic_axes=[b,q], is_sparse=True, name='qgw')
+        qnw = C.input_variable(self.wn_dim, dynamic_axes=[b,q], is_sparse=True, name='qnw')
  #       agw = C.input_variable(self.wg_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='agw')
  #       anw = C.input_variable(self.wn_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='anw')
         aw = C.input_variable(self.vocab_size+2, dynamic_axes=[b,a], is_sparse=False, name='aw')
@@ -331,10 +331,10 @@ class PolyMath:
         outputs = self.output_layer(mod_context, aw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
         #test_output, train_logits = self.output_layer(mod_context, aw)
-        print(outputs.parameters)
-        print(mod_context.parameters)
-        print(test_output)
-
+#        print(outputs.parameters)
+#        print(mod_context.parameters)
+#        print(test_output)
+        print(C.argmax(test_output,0))
 #        print(mod_context.parameters + s2smodel.parameters)
       #  newm  = s2smodel + mod_context
 #        print(newm.parameters)

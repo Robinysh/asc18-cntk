@@ -6,23 +6,23 @@ data_config = {
 }
 
 model_config = {
-    'hidden_dim'     	: 100,
+    'hidden_dim'     	: 50,
     'num_layers'        : 2,
     'attention_dim'     : 2,
-    'char_convs'     	: 100,
+    'char_convs'     	: 50,
     'char_emb_dim'   	: 8,
     'dropout'        	: 0.5,
     'highway_layers' 	: 2,
-    'two_step'          : True,
-    'use_cudnn'         : True,
+    'two_step'          : False,
+    'use_cudnn'         : False,
 }
 
 training_config = {
-    'minibatch_size'    : 1000,    # in samples when using ctf reader, per worker
-    'epoch_size'        : 1000,   # in sequences, when using ctf reader
-    'log_freq'          : 500,     # in minibatchs
+    'minibatch_size'    : 32,    # in samples when using ctf reader, per worker
+    'epoch_size'        : 128,   # in sequences, when using ctf reader
+    'log_freq'          : 100,     # in minibatchs
     'max_epochs'        : 300,
-    'lr'                : 2,
+    'lr'                : 0.5,
     'train_data'        : 'train.ctf',  # or 'train.tsv'
     'val_data'          : 'dev.ctf',
     'val_interval'      : 1,       # interval in epochs to run validation

@@ -80,23 +80,20 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                 context_ng_words = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in cwids] for cwids in batch['cwids']], polymath.wn_dim)
                 query_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in qwids] for qwids in batch['qwids']], polymath.wg_dim)
                 query_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in qwids] for qwids in batch['qwids']], polymath.wn_dim)
-                answer_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in awids] for awids in batch['awids']], polymath.wg_dim)
-                answer_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in awids] for awids in batch['awids']], polymath.wn_dim)
+#                answer_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in awids] for awids in batch['awids']], polymath.wg_dim)
+#                answer_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in awids] for awids in batch['awids']], polymath.wn_dim)
                 answer_words   = C.Value.one_hot([[i for i in awids] for awids in batch['awids']], polymath.vocab_size+2)
                 context_chars = [np.asarray([[[c for c in cc+[0]*max(0,polymath.word_size-len(cc))]] for cc in ccid], dtype=np.float32) for ccid in batch['ccids']]
                 query_chars   = [np.asarray([[[c for c in qc+[0]*max(0,polymath.word_size-len(qc))]] for qc in qcid], dtype=np.float32) for qcid in batch['qcids']]
-                answer_chars   = [np.asarray([[[c for c in ac+[0]*max(0,polymath.word_size-len(ac))]] for ac in acid], dtype=np.float32) for acid in batch['acids']]
+#                answer_chars   = [np.asarray([[[c for c in ac+[0]*max(0,polymath.word_size-len(ac))]] for ac in acid], dtype=np.float32) for acid in batch['acids']]
 
                 yield { argument_by_name(func, 'cgw'): context_g_words,
                         argument_by_name(func, 'qgw'): query_g_words,
-                        argument_by_name(func, 'agw'): answer_g_words,
                         argument_by_name(func, 'cnw'): context_ng_words,
                         argument_by_name(func, 'qnw'): query_ng_words,
-                        argument_by_name(func, 'anw'): answer_ng_words,
                         argument_by_name(func, 'aw' ): answer_words,
                         argument_by_name(func, 'cc' ): context_chars,
-                        argument_by_name(func, 'qc' ): query_chars,
-                        argument_by_name(func, 'ac' ): answer_chars}
+                        argument_by_name(func, 'qc' ): query_chars}
             else:
                 yield {} # need to generate empty batch for distributed training
 
@@ -234,11 +231,13 @@ def symbolic_best_span(begin, end):
     return C.layers.Fold(C.element_max, initial_state=C.constant(-1e+30))(running_max_begin + end)
 
 def validate_model(i2w, test_data, model, polymath):
-#    begin_logits = model.outputs[0]
-#    end_logits   = model.outputs[1]
-#    sparse_to_dense = create_sparse_to_dense(polymath.vocab_size)
+
+
+
+#    pa  = model.outputs[0]
+#    sa  =  model.outputs[3]
     loss = model.outputs[2]
-    print(loss)
+#    print(loss)
     testout = model.outputs[1]  # according to model.shape
     print(testout)
     root = C.as_composite(loss.owner)
@@ -246,61 +245,54 @@ def validate_model(i2w, test_data, model, polymath):
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
 
     onehot = argument_by_name(root, 'aw')
-
-#    pred_out = C.sequence.input_variable(polymath.vocab_size + 2 , sequence_axis=onehot.dynamic_axes[1], name='predout')
-    '''
-    @C.Function
-    def format_sequences(sequences:C.layers.typing.SequenceOver[C.Axis.default_dynamic_axis()][127812], i2w):
-        print(sequences)
-        out = []
-
-        for w in sequences:
-            print(w)
-            x =  np.argmax(w,axis = 1)
-            print(x)
-            if x < 127810:
-                out.append(i2w[x])
-#    for w in sequences:
-#        print(w)
-        return [" ".join(out)]    
-     '''
+#    fs  = create_fs()
+#    pred_out = C.sequence.input_variable(polymath.vocab_size + 2 , sequence_axis=onehot.dynamic_axes[1], name='predout')`
  #   predicted_len = C.sequence.reduce_sum(predicted_span)
  #   true_len = C.sequence.reduce_sum(true_span)
  #   common_len = C.sequence.reduce_sum(common_span)
- #   f1 = 2*common_len/(predicted_len+true_len)
+ #   f1 = 2*common_len/(predicted_l:en+true_len)
  #   exact_match = C.element_min(begin_match, end_match)
  #   precision = common_len/predicted_len
  #   recall = common_len/true_len
  #   overlap = C.greater(common_len, 0)
  #   s = lambda x: C.reduce_sum(x, axis=C.Axis.all_axes())
  #   stats = C.splice(s(f1), s(exact_match), s(precision), s(recall), s(overlap), s(begin_match), s(end_match))
-    
+    stat = C.argmax(onehot,0)
+ #   pred_out = C.argmax(testout,-2)
     # Evaluation parameters
-    minibatch_size = 1
+    minibatch_size = 32
     num_sequences = 0
 
-    stat = []
+
     loss_sum = 0
     i=0
+ #   tstt =     model.test(mb_source, minibatch_size=32, model_inputs_to_streams = input_map)
+    print('ha')
+ #   print(tstt)
     while True:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
-        out = model.eval(data, outputs=[testout, loss], as_numpy=False)
-        testloss = out[loss]
-        
- #       outputs = format_sequences(testout, i2w)
-        print('test loss',testloss)
-        print(onehot)
+        out = model.eval(data, outputs=[testout, loss], as_numpy=True)
+#        testloss = out[loss]
+#        testout  = C.argmax(out[testout],0).eval()
+#        print(testout)
+#        print(outputs)
+#        true = format_sequences(onehot, i2w)
+#        true = stat.eval({onehot:data[onehot]})
+#        print(true)
+#        predout=pred_out.eval(data)
+#        print('predout',predout)
+        print('----------------------------------------')
         print(testout) 
 #        print(np.sum(loss.asarray()))
         output = ['a']
- #       realout  = format_sequences(sequences, i2w)
-        print('1')
-        if i == 0:
+#        predout  = format_sequences(out[testout], i2w)
+#        print('1')
+#        if i == 0:
 #            print(outputs)
-            print(realout)
-            i=i+1 
+#            print(realout)
+#            i=i+1 
              
 #        num_total += len(outputs)
 #        num_wrong += sum([label != output for output, label in zip(outputs, realout)])
@@ -346,22 +338,22 @@ def create_eval_func():
 
         return 
     return evl_fun
+'''
 
-@C.Function
-def format_sequences(sequences:C.layers.typing.SequenceOver[C.Axis.default_dynamic_axis()][127812], i2w):
+def format_sequences(sequences, i2w):
     print(sequences)
-    out = []
-    
+ 
+ #       out =  np.argmax(sequences,axis = 1)   
     for w in sequences:
-        print(w)
+ #       print(w)
         x =  np.argmax(w,axis = 1) 
         print(x)
         if x < 127810:
             out.append(i2w[x])
 #    for w in sequences:
 #        print(w)
-    return [" ".join(out)]
-'''
+        return [" ".join(out)]
+
 
 # map from token to char offset
 def w2c_map(s, words):
@@ -386,12 +378,13 @@ def get_answer(raw_text, tokens, start, end):
         pdb.set_trace()
 
 def test(i2w ,test_data, model_path, model_file, config_file):
+    #C.try_set_default_device(C.cpu())
     polymath = PolyMath(config_file)
     model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
     loss         = C.as_composite(model.outputs[2].owner)
     output       = model.outputs[1]
 
-    batch_size = 32 # in sequences
+    batch_size = 1 # in sequences
     misc = {'rawctx':[], 'ctoken':[], 'answer':[], 'uid':[]}
     tsv_reader = create_tsv_reader(loss, test_data, polymath, batch_size, 1, is_test=True, misc=misc)
     results = {}
@@ -429,11 +422,11 @@ if __name__=='__main__':
     args = vars(parser.parse_args())
 
     if args['outputdir'] is not None:
-        model_path = args['outputdir'] + "/models"
+        model_path = args['outputdir']
     if args['datadir'] is not None:
         data_path = args['datadir']
         
-    #C.try_set_default_device(C.gpu(0))
+    #C.try_set_default_device(C.cpu())
 
     test_data = args['test']
     test_model = args['model']
