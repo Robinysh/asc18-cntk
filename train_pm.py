@@ -166,7 +166,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             #TODO replace with rougel with external script(possibly)
-            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
+#            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
             #if epoch_stat['best_val_err'] > val_err:
             #    epoch_stat['best_val_err'] = val_err
             #    epoch_stat['best_since'] = 0
@@ -262,9 +262,8 @@ def validate_model(i2w, test_data, model, polymath):
     stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
     loss_sum = 0
 
- #   tstt =     model.test(mb_source, minibatch_size=32, model_inputs_to_streams = input_map)
     print('ha')
- #   print(tstt)
+
     while True:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
@@ -277,14 +276,10 @@ def validate_model(i2w, test_data, model, polymath):
 #        print('predout_text', predout_text)
         testloss = out[loss]
         stat += RL.calc_score(predout_text, true_text)
-#        print(testloss)
-#        print('2')
-#        g = best_span_score.grad({begin_prediction:out[begin_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
-#        other_input_map = {pred_out: out[testout], end_prediction: data[onehot]}
-#        stat_sum += stats.eval((other_input_map))
+
         loss_sum += np.sum(np.asarray(testloss))
         num_sequences += data[onehot].num_sequences
-#        print('3')
+        print(stat)
 #    stat_avg = stat_sum / num_sequences
     loss_avg = loss_sum / num_sequences
     stat_avg = stat / float(num_sequences)
@@ -322,6 +317,7 @@ def create_eval_func():
 '''
 
 def format_sequences(sequences, i2w):
+    print(sequences)
     out =  [] 
     for w in sequences: 
         if w < 127810:
@@ -355,20 +351,22 @@ def test(i2w ,test_data, model_path, model_file, config_file):
     #C.try_set_default_device(C.cpu())
     polymath = PolyMath(config_file)
     model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
-    loss         = C.as_composite(model.outputs[2].owner)
+    loss         = model.outputs[2]
+    root = C.as_composite(loss.owner)
     output       = model.outputs[1]
 
     batch_size = 1 # in sequences
     misc = {'rawctx':[], 'ctoken':[], 'answer':[], 'uid':[]}
-    tsv_reader = create_tsv_reader(loss, test_data, polymath, batch_size, 1, is_test=True, misc=misc)
+    tsv_reader = create_tsv_reader(root, test_data, polymath, batch_size, 1, is_test=True, misc=misc)
     results = {}
     with open('{}_out.json'.format(model_file), 'w', encoding='utf-8') as json_output:
         for data in tsv_reader:
             out = model.eval(data, outputs=[output,loss], as_numpy=False)
             for seq, (raw_text, ctokens, answer, uid) in enumerate(zip(misc['rawctx'], misc['ctoken'], misc['answer'], misc['uid'])):
-                predict_answer = output
+                predict_answer = format_sequences(np.asarray(out[output].as_sequences()).reshape(-1), i2w)
                 results['query_id'] = int(uid)
                 results['answers'] = [predict_answer]
+                print(results)
                 json.dump(results, json_output)
                 json_output.write("\n")
             misc['rawctx'] = []
