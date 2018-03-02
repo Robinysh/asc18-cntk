@@ -102,7 +102,8 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
     polymath = PolyMath(config_file)
     z, loss = polymath.model()
     training_config = importlib.import_module(config_file).training_config
-    
+#    print(z)
+#    print(z.parameters)    
     max_epochs = training_config['max_epochs']
     log_freq = training_config['log_freq']
 
@@ -117,15 +118,20 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
     lr = C.learning_parameter_schedule(training_config['lr'], minibatch_size=None, epoch_size=None)
 
     ema = {}
-#    dummies = []
+    dummies = []
     for p in z.parameters:
         ema_p = C.constant(0, shape=p.shape, dtype=p.dtype, name='ema_%s' % p.uid)
         ema[p.uid] = ema_p
-#        dummies.append(C.reduce_sum(C.assign(ema_p, 0.999 * ema_p + 0.001 * p)))
-#    dummy = C.combine(dummies)
+        dummies.append(C.reduce_sum(C.assign(ema_p, 0.999 * ema_p + 0.001 * p)))
+    dummy = C.combine(dummies)
 
-    learner = C.adadelta(z.parameters, lr)
-
+#    learner = C.adadelta(z.parameters, lr)
+    learner = C.fsadagrad(z.parameters,
+                          #apply the learning rate as if it is a minibatch of size 1
+                          lr ,
+                          momentum = C.momentum_schedule(0.9366416204111472,minibatch_size = None),
+                          gradient_clipping_threshold_per_sample=2.3,
+                          gradient_clipping_with_truncation=True)
     if C.Communicator.num_workers() > 1:
         learner = C.data_parallel_distributed_learner(learner)
 
@@ -140,11 +146,6 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
     model_file = os.path.join(model_path, model_name)
     model = C.combine(z.outputs + loss.outputs) #this is for validation only
 #    print(model)
-#    print(model.outputs[0])
-#    print(model.outputs[1])
-#    print(model.outputs[2])
-#    print(model.outputs[3])
-
     epoch_stat = {
         'best_val_err' : 1000,
         'best_since'   : 0,
@@ -202,7 +203,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
 
                 trainer.train_minibatch(data)
                 num_seq += trainer.previous_minibatch_sample_count
- #               dummy.eval()
+                dummy.eval()
                 if num_seq >= epoch_size:
                     break
             if not post_epoch_work(epoch_stat):
@@ -219,7 +220,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             for data in tsv_reader:
                 if (minibatch_count % C.Communicator.num_workers()) == C.Communicator.rank():
                     trainer.train_minibatch(data) # update model with it
-#                    dummy.eval()
+                    dummy.eval()
                 minibatch_count += 1
             if not post_epoch_work(epoch_stat):
                 break
@@ -234,55 +235,41 @@ def symbolic_best_span(begin, end):
 def validate_model(i2w, test_data, model, polymath):
     print('validating')
     RL = rouge.Rouge()
-    loss = model.outputs[2]
-    testout = model.outputs[1]  # according to model.shape
+    loss = model.outputs[1]
+    testout = model.outputs[0]  # according to model.shape
 
     root = C.as_composite(loss.owner)
  
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
 
     onehot = argument_by_name(root, 'aw')
-#    fs  = create_fs()
-#    pred_out = C.sequence.input_variable(polymath.vocab_size + 2 , sequence_axis=onehot.dynamic_axes[1], name='predout')`
- #   predicted_len = C.sequence.reduce_sum(predicted_span)
- #   true_len = C.sequence.reduce_sum(true_span)
- #   common_len = C.sequence.reduce_sum(common_span)
- #   f1 = 2*common_len/(predicted_l:en+true_len)
- #   exact_match = C.element_min(begin_match, end_match)
- #   precision = common_len/predicted_len
- #   recall = common_len/true_len
- #   overlap = C.greater(common_len, 0)
- #   s = lambda x: C.reduce_sum(x, axis=C.Axis.all_axes())
- #   stats = C.splice(s(f1), s(exact_match), s(precision), s(recall), s(overlap), s(begin_match), s(end_match))
+
     one2num = C.argmax(onehot,0)
-#    pred_out = C.argmax(testout,0)
-    # Evaluation parameters
+
     minibatch_size = 16
     num_sequences = 0
 
     stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
     loss_sum = 0
 
-#    print('ha')
-
     while True:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
-#        print(data[onehot].num_sequences)
+
         out = model.eval(data, outputs=[testout, loss], as_numpy=True)
         true = one2num.eval({onehot:data[onehot]})
         true_text = format_sequences(np.asarray(true).reshape(-1).tolist(),i2w)
-#        print('true_text', true_text)
+
         predout_text = format_sequences(np.asarray(out[testout]).reshape(-1), i2w)
-#        print('predout_text', predout_text)
+      #  print(predout_text)
         testloss = out[loss]
         stat += RL.calc_score(predout_text, true_text)
 
         loss_sum += np.sum(np.asarray(testloss))
         num_sequences += data[onehot].num_sequences
-#        print(stat)
-#    stat_avg = stat_sum / num_sequences
+
+
     loss_avg = loss_sum / num_sequences
     stat_avg = stat / float(num_sequences)
     print("Validated {} sequences, loss {:.4f}, RouL {:.4f}, LCS {:.4f}, LengCan {:.4f}, LenRef {:.4f}, prec {:.4f}, rec {:.4f}".format(
@@ -290,15 +277,8 @@ def validate_model(i2w, test_data, model, polymath):
             loss_avg, stat_avg[0], stat_avg[1], stat_avg[2], stat_avg[3], stat_avg[4], stat_avg[5]))
 
     return loss_avg
-'''
-def create_sparse_to_dense(input_vocab_dim):
-    I = C.Constant(np.eye(input_vocab_dim))
-    @C.Function
-    @C.layers.Signature(InputSequence[C.layers.SparseTensor[input_vocab_dim]])
-    def no_op(input):
-        return C.times(input, I)
-    return no_op
-'''
+
+
 def get_vocab(path):
     # get the vocab for printing output sequences in plaintext
 #    vocab = [w.strip() for w in open(path).readlines()]
@@ -308,15 +288,7 @@ def get_vocab(path):
            known, vocab, chars = pickle.load(vf)
     i2w = { i:w for i,w in enumerate(vocab) }
     return i2w
-'''
-def create_eval_func():
-    @C.Function
-    def evl_fun(predout, trueout):
 
-
-        return 
-    return evl_fun
-'''
 
 def format_sequences(sequences, i2w):
 #    print(sequences)
@@ -353,9 +325,9 @@ def test(i2w ,test_data, model_path, model_file, config_file):
     #C.try_set_default_device(C.cpu())
     polymath = PolyMath(config_file)
     model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
-    loss         = model.outputs[2]
+    loss         = model.outputs[1]
     root = C.as_composite(loss.owner)
-    output       = model.outputs[1]
+    output       = model.outputs[0]
 
     batch_size = 1 # in sequences
     misc = {'rawctx':[], 'ctoken':[], 'answer':[], 'uid':[]}

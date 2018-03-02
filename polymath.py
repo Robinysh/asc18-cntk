@@ -32,13 +32,15 @@ class PolyMath:
         self.two_step = model_config['two_step']
         self.use_cudnn = model_config['use_cudnn']
         self.use_sparse = False
+       
+        self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+2, sparse_output=self.use_sparse) 
+        #self.sentence_start = C.Constant(value = np.eye(N=1,M=self.vocab_size+2,k=self.vocab_size+1), dtype = np.float32)
 
-        self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+2, sparse_output=self.use_sparse)
-        self.sentence_end_index = self.vocab_size+1
+        self.sentence_end_index = self.vocab_size + 1
         #self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32), name='start')
         #self.sentence_end_index = self.vocab['</s>']
         self.sentence_max_length = 0.1
-
+        print('vocab size',self.vocab_size)
         print('dropout', self.dropout)
         print('use_cudnn', self.use_cudnn)
         print('use_sparse', self.use_sparse)
@@ -53,7 +55,7 @@ class PolyMath:
     def embed(self):
         # load glove
         npglove = np.zeros((self.wg_dim, self.hidden_dim), dtype=np.float32)
-        with open(os.path.join(self.abs_path, 'glove.6B.200d.txt'), encoding='utf-8') as f:
+        with open(os.path.join(self.abs_path, 'glove.6B.100d.txt'), encoding='utf-8') as f:
             for line in f:
                 parts = line.split()
                 word = parts[0].lower()
@@ -164,32 +166,11 @@ class PolyMath:
             [(att_context, attention_context)],
             'modeling_layer',
             'modeling_layer')
-    """
-    def output_layer(self, attention_context, modeling_context):
+
+    def output_layer(self,attention_context,  modeling_context, aw):
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
-        mod_context = C.placeholder(shape=(2*self.hidden_dim,))
-        #output layer
-        start_logits = C.layers.Dense(1, name='out_start')(C.dropout(C.splice(mod_context, att_context), self.dropout))
-        if self.two_step:
-            start_hardmax = seq_hardmax(start_logits)
-            att_mod_ctx = C.sequence.last(C.sequence.gather(mod_context, start_hardmax))
-        else:
-            start_prob = C.softmax(start_logits)
-            att_mod_ctx = C.sequence.reduce_sum(mod_context * start_prob)
-        att_mod_ctx_expanded = C.sequence.broadcast_as(att_mod_ctx, att_context)
-        end_input = C.splice(att_context, mod_context, att_mod_ctx_expanded, mod_context * att_mod_ctx_expanded)
-        m2 = OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='output_rnn')(end_input)
-        end_logits = C.layers.Dense(1, name='out_end')(C.dropout(C.splice(m2, att_context), self.dropout))
-
-        return C.as_block(
-            C.combine([start_logits, end_logits]),
-            [(att_context, attention_context), (mod_context, modeling_context)],
-            'output_layer',
-            'output_layer')
-    """
-
-    def output_layer(self, modeling_context, aw):
-        mod_context = C.placeholder(shape=(2*self.hidden_dim,))
+        mod1_context = C.placeholder(shape=(2*self.hidden_dim,))
+        mod_context = C.dropout(C.splice(mod1_context, att_context),self.dropout)
         a_onehot = C.placeholder(shape=(self.vocab_size+2,))
         #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
@@ -199,7 +180,7 @@ class PolyMath:
             # to the (i+1)th layer as its input
             # Note: We go_backwards for the plain model, but forward for the attention model.
 
-            """
+            
             with C.layers.default_options(enable_self_stabilization=True, go_backwards=False):
                 LastRecurrence = C.layers.Recurrence
                 encode = C.layers.Sequential([
@@ -209,7 +190,7 @@ class PolyMath:
                     LastRecurrence(C.layers.LSTM(self.hidden_dim), return_full_state=True),
                     (C.layers.Label('encoded_h'), C.layers.Label('encoded_c')),
                 ])
-            """
+            
             # Decoder: (history*, input*) --> unnormalized_word_logp*
             # where history is one of these, delayed by 1 step and <s> prepended:
             #  - training: labels
@@ -285,7 +266,7 @@ class PolyMath:
         #C.combine([model_greedy, model_train]),
         return C.as_block(
             C.combine((model_train, model_greedy)),
-            [(mod_context, modeling_context), (a_onehot, aw)],
+            [(att_context, attention_context),(mod1_context, modeling_context), (a_onehot, aw)],
             'attention_layer',
             'attention_layer')
 
@@ -295,6 +276,7 @@ class PolyMath:
             # criterion function must drop the <s> from the labels
             #postprocessed_labels = C.sequence.slice(labels, 1, 0) # <s> A B C </s> --> A B C </s>
             ce = C.cross_entropy_with_softmax(input, labels, name='loss')
+
             errs = C.classification_error(input, labels, name='NumOfDiffWords')
             return (ce, errs)
 
@@ -325,18 +307,23 @@ class PolyMath:
 
         # modeling layer
         mod_context = self.modeling_layer(att_context) 
+     
         # output layer
         #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
-        outputs = self.output_layer(mod_context, aw)
+        outputs = self.output_layer(att_context, mod_context, aw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
+   
+       
         #test_output, train_logits = self.output_layer(mod_context, aw)
-
+      #  test_output = print_node(test_output)        
+   #     train_logits =  print_node(train_logits)
+       # aw = print_node(aw)
         seq_loss = self.create_criterion_function()
         loss = seq_loss(train_logits, aw) #TODO Feed onehot answer into it
-       
+ 
         # loss
         #start_loss = seq_loss(start_logits)
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return outputs, loss
+        return C.combine([test_output]), loss
