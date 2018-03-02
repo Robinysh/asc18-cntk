@@ -9,7 +9,7 @@ char_count_threshold = data_config['char_count_threshold']
 word_size = data_config['word_size']
 
 sanitize = str.maketrans({"|": None, "\n": None})
-tsvs = 'train', 'dev', 'test'
+tsvs = 'train', 'dev'
 unk = '<UNK>'
 pad = ''
 EMPTY_TOKEN = '<NULL>'
@@ -41,7 +41,7 @@ def populate_dicts(files):
                         test_wdcnt[t.lower()] += 1
 
     # add all words that are both in glove and the vocabulary first
-    with open('glove.6B.100d.txt', encoding='utf-8') as f:
+    with open('glove.6B.200d.txt', encoding='utf-8') as f:
         for line in f:
             word = line.split()[0].lower()
             if wdcnt[word] >= 1 or test_wdcnt[word] >= 1: # polymath adds word to dict regardless of word_count_threshold when it's in GloVe
@@ -72,7 +72,7 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
 
     ctokens = context.split(' ')
     qtokens = query.split(' ')
-    atokens = answer.split(' ')
+    atokens = raw_answer.split(' ')  #need raw answer for training
 
     #replace EMPTY_TOKEN with ''
     ctokens = [t if t != EMPTY_TOKEN else '' for t in ctokens]

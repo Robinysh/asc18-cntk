@@ -149,7 +149,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
         'best_val_err' : 1000,
         'best_since'   : 0,
         'val_since'    : 0}
-    if restore and  os.path.isfile(model_file):
+    if restore and os.path.isfile(model_file):
   #  if restore and os.path.isfile(model_file):
         trainer.restore_from_checkpoint(model_file)
         #after restore always re-evaluate
@@ -166,7 +166,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             #TODO replace with rougel with external script(possibly)
-#            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
+            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
             #if epoch_stat['best_val_err'] > val_err:
             #    epoch_stat['best_val_err'] = val_err
             #    epoch_stat['best_since'] = 0
@@ -232,6 +232,7 @@ def symbolic_best_span(begin, end):
     return C.layers.Fold(C.element_max, initial_state=C.constant(-1e+30))(running_max_begin + end)
 
 def validate_model(i2w, test_data, model, polymath):
+    print('validating')
     RL = rouge.Rouge()
     loss = model.outputs[2]
     testout = model.outputs[1]  # according to model.shape
@@ -262,12 +263,13 @@ def validate_model(i2w, test_data, model, polymath):
     stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
     loss_sum = 0
 
-    print('ha')
+#    print('ha')
 
     while True:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
+#        print(data[onehot].num_sequences)
         out = model.eval(data, outputs=[testout, loss], as_numpy=True)
         true = one2num.eval({onehot:data[onehot]})
         true_text = format_sequences(np.asarray(true).reshape(-1).tolist(),i2w)
@@ -279,11 +281,11 @@ def validate_model(i2w, test_data, model, polymath):
 
         loss_sum += np.sum(np.asarray(testloss))
         num_sequences += data[onehot].num_sequences
-        print(stat)
+#        print(stat)
 #    stat_avg = stat_sum / num_sequences
     loss_avg = loss_sum / num_sequences
     stat_avg = stat / float(num_sequences)
-    print("Validated {} sequences, loss {:.4f}, RouL {:.4f}, LCS {:.4f}, RouL {:.4f}, LengCan {:.4f}, LenRef {:.4f}, prec, rec".format(
+    print("Validated {} sequences, loss {:.4f}, RouL {:.4f}, LCS {:.4f}, LengCan {:.4f}, LenRef {:.4f}, prec {:.4f}, rec {:.4f}".format(
             num_sequences,
             loss_avg, stat_avg[0], stat_avg[1], stat_avg[2], stat_avg[3], stat_avg[4], stat_avg[5]))
 
@@ -317,7 +319,7 @@ def create_eval_func():
 '''
 
 def format_sequences(sequences, i2w):
-    print(sequences)
+#    print(sequences)
     out =  [] 
     for w in sequences: 
         if w < 127810:
