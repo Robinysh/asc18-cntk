@@ -31,7 +31,7 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
                 query_g_words    = C.io.StreamDef('qgw', shape=polymath.wg_dim,     is_sparse=True),
                 context_ng_words = C.io.StreamDef('cnw', shape=polymath.wn_dim,     is_sparse=True),
                 query_ng_words   = C.io.StreamDef('qnw', shape=polymath.wn_dim,     is_sparse=True),
-                answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size + 2,     is_sparse=True),
+                answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size + 1,     is_sparse=True),
                 context_chars    = C.io.StreamDef('cc',  shape=polymath.word_size,  is_sparse=False),
                 query_chars      = C.io.StreamDef('qc',  shape=polymath.word_size,  is_sparse=False))),
         randomize=randomize,
@@ -83,7 +83,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                 query_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in qwids] for qwids in batch['qwids']], polymath.wn_dim)
 #                answer_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in awids] for awids in batch['awids']], polymath.wg_dim)
 #                answer_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in awids] for awids in batch['awids']], polymath.wn_dim)
-                answer_words   = C.Value.one_hot([[i for i in awids] for awids in batch['awids']], polymath.vocab_size+2)
+                answer_words   = C.Value.one_hot([[i for i in awids] for awids in batch['awids']], polymath.vocab_size+1)
                 context_chars = [np.asarray([[[c for c in cc+[0]*max(0,polymath.word_size-len(cc))]] for cc in ccid], dtype=np.float32) for ccid in batch['ccids']]
                 query_chars   = [np.asarray([[[c for c in qc+[0]*max(0,polymath.word_size-len(qc))]] for qc in qcid], dtype=np.float32) for qcid in batch['qcids']]
 #                answer_chars   = [np.asarray([[[c for c in ac+[0]*max(0,polymath.word_size-len(ac))]] for ac in acid], dtype=np.float32) for acid in batch['acids']]
@@ -129,7 +129,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
     learner = C.fsadagrad(z.parameters,
                           #apply the learning rate as if it is a minibatch of size 1
                           lr ,
-                          momentum = C.momentum_schedule(0.9366416204111472,minibatch_size = None),
+                          momentum = C.momentum_schedule(0.9366416204111472,minibatch_size = training_config['minibatch_size']),
                           gradient_clipping_threshold_per_sample=2.3,
                           gradient_clipping_with_truncation=True)
     if C.Communicator.num_workers() > 1:
@@ -246,7 +246,7 @@ def validate_model(i2w, test_data, model, polymath):
 
     one2num = C.argmax(onehot,0)
 
-    minibatch_size = 16
+    minibatch_size = 128
     num_sequences = 0
 
     stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
@@ -294,7 +294,7 @@ def format_sequences(sequences, i2w):
 #    print(sequences)
     out =  [] 
     for w in sequences: 
-        if w < 127810:
+        if w < 131088 and w != 126355:
             out.append(i2w[w])
     return " ".join(out)
 

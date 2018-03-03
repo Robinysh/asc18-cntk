@@ -33,10 +33,11 @@ class PolyMath:
         self.use_cudnn = model_config['use_cudnn']
         self.use_sparse = False
        
-        self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+2, sparse_output=self.use_sparse) 
+        self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+1, sparse_output=self.use_sparse) 
         #self.sentence_start = C.Constant(value = np.eye(N=1,M=self.vocab_size+2,k=self.vocab_size+1), dtype = np.float32)
 
-        self.sentence_end_index = self.vocab_size + 1
+        self.sentence_end_index = self.vocab['</s>']
+        print('SenEnd',self.sentence_end_index)
         #self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32), name='start')
         #self.sentence_end_index = self.vocab['</s>']
         self.sentence_max_length = 0.1
@@ -171,7 +172,7 @@ class PolyMath:
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
         mod1_context = C.placeholder(shape=(2*self.hidden_dim,))
         mod_context = C.dropout(C.splice(mod1_context, att_context),self.dropout)
-        a_onehot = C.placeholder(shape=(self.vocab_size+2,))
+        a_onehot = C.placeholder(shape=(self.vocab_size+1,))
         #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
         def create_model():
@@ -200,7 +201,7 @@ class PolyMath:
                 stab_in = C.layers.Stabilizer()
                 rec_blocks = [C.layers.LSTM(self.hidden_dim) for i in range(self.num_layers)]
                 stab_out = C.layers.Stabilizer()
-                proj_out = C.layers.Dense(self.vocab_size+2, name='out_proj')
+                proj_out = C.layers.Dense(self.vocab_size+1, name='out_proj')
                 # attention model
                 attention_model = C.layers.AttentionModel(self.attention_dim, 
                                                               name='attention_model') # :: (h_enc*, h_dec) -> (h_dec augmented)
@@ -293,7 +294,7 @@ class PolyMath:
         qnw = C.input_variable(self.wn_dim, dynamic_axes=[b,q], is_sparse=True, name='qnw')
  #       agw = C.input_variable(self.wg_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='agw')
  #       anw = C.input_variable(self.wn_dim, dynamic_axes=[b,a], is_sparse=self.use_sparse, name='anw')
-        aw = C.input_variable(self.vocab_size+2, dynamic_axes=[b,a], is_sparse=False, name='aw')
+        aw = C.input_variable(self.vocab_size+1, dynamic_axes=[b,a], is_sparse=False, name='aw')
       #  aw = C.sequence.input_variable(self.vocab_size+2, is_sparse=False, sequence_axis = a ,name = 'aw')
         cc = C.input_variable((1,self.word_size), dynamic_axes=[b,c], name='cc')
         qc = C.input_variable((1,self.word_size), dynamic_axes=[b,q], name='qc')

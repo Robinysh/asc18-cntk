@@ -9,7 +9,7 @@ char_count_threshold = data_config['char_count_threshold']
 word_size = data_config['word_size']
 
 sanitize = str.maketrans({"|": None, "\n": None})
-tsvs = 'train', 'dev'
+tsvs = 'train', 'dev', 'test'
 unk = '<UNK>'
 pad = ''
 EMPTY_TOKEN = '<NULL>'
@@ -41,13 +41,13 @@ def populate_dicts(files):
                         test_wdcnt[t.lower()] += 1
 
     # add all words that are both in glove and the vocabulary first
-    with open('glove.6B.200d.txt', encoding='utf-8') as f:
+    with open('glove.6B.100d.txt', encoding='utf-8') as f:
         for line in f:
             word = line.split()[0].lower()
             if wdcnt[word] >= 1 or test_wdcnt[word] >= 1: # polymath adds word to dict regardless of word_count_threshold when it's in GloVe
                 _ = vocab[word]
     known =len(vocab)
-
+    _ = vocab['</s>']
     # add the special markers
     _ = vocab[pad]
     _ = vocab[unk]
@@ -66,10 +66,10 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
 
     if is_test:
         uid, title, context, query = line.split('\t')
-        answer = ''
+        raw_answer = ''
     else:
         uid, title, context, query, answer, raw_context, begin_answer, end_answer, raw_answer = line.split('\t')
-
+        raw_answer = raw_answer + ' </s>'
     ctokens = context.split(' ')
     qtokens = query.split(' ')
     atokens = raw_answer.split(' ')  #need raw answer for training
@@ -85,24 +85,24 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
     awids = [vocab.get(t.lower(), unk_w) for t in atokens]
     ccids = [[chars.get(c, unk_c) for c in t][:word_size] for t in ctokens] #clamp at word_size
     qcids = [[chars.get(c, unk_c) for c in t][:word_size] for t in qtokens]
-    acids = [[chars.get(c, unk_c) for c in t][:word_size] for t in atokens]
+#    acids = [[chars.get(c, unk_c) for c in t][:word_size] for t in atokens]
 
     if is_test and misc.keys():
-        misc['answer'] += [answer]
+        misc['answer'] += [raw_answer]
         misc['rawctx'] += [context]
         misc['ctoken'] += [ctokens]
 
-    return ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids, acids
+    return ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids
 
 def tsv_to_ctf(f, g, vocab, chars, is_test):
     print("Known words: %d" % known)
     print("Vocab size: %d" % len(vocab))
     print("Char size: %d" % len(chars))
     for lineno, line in enumerate(f):
-        ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids, acids = tsv_iter(line, vocab, chars, is_test)
+        ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids = tsv_iter(line, vocab, chars, is_test)
 
-        for     ctoken,  qtoken,  atoken,  cwid,  qwid, awid, ccid,  qcid, acid in zip_longest(
-                ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids, acids):
+        for     ctoken,  qtoken,  atoken,  cwid,  qwid, awid, ccid,  qcid in zip_longest(
+                ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids):
             out = [str(lineno)]
             if ctoken is not None:
                 out.append('|# %s' % pad_spec.format(ctoken.translate(sanitize)))
@@ -139,9 +139,9 @@ def tsv_to_ctf(f, g, vocab, chars, is_test):
             if qcid is not None:
                 outq = ' '.join(['%d' % c for c in qcid+[0]*max(word_size - len(qcid), 0)])
                 out.append('|qc %s' % outq)
-            if acid is not None:
-                outa = ' '.join(['%d' % c for c in acid+[0]*max(word_size - len(acid), 0)])
-                out.append('|ac %s' % outa)
+#            if acid is not None:
+#                outa = ' '.join(['%d' % c for c in acid+[0]*max(word_size - len(acid), 0)])
+#                out.append('|ac %s' % outa)
             g.write('\t'.join(out))
             g.write('\n')
 
