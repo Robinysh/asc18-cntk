@@ -2,6 +2,8 @@ import cntk as C
 import numpy as np
 from polymath import PolyMath
 from squad_utils import metric_max_over_ground_truths, f1_score, exact_match_score
+from itertools import groupby
+from operator import itermgetter
 import tsv2ctf
 import os
 import argparse
@@ -9,6 +11,7 @@ import importlib
 import time
 import json
 import pickle
+
 import rouge
 
 model_name = "pm.model"
@@ -289,11 +292,15 @@ def get_vocab(path):
     i2w = { i:w for i,w in enumerate(vocab) }
     return i2w
 
+def unique_justseen(iterable):
+    #removes adjacent duplicates
+    #[1,2,2,2,3] -> [1,2,3]
+    return list(map(next, map(itemgetter(1), groupby(iterable))))
 
 def format_sequences(sequences, i2w):
 #    print(sequences)
     out =  [] 
-    for w in sequences: 
+    for w in unique_justseen(sequences): 
         if w < 131088 and w != 126355:
             out.append(i2w[w])
     return " ".join(out)
