@@ -34,12 +34,8 @@ class PolyMath:
         self.use_sparse = False
        
         self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+1, sparse_output=self.use_sparse) 
-        #self.sentence_start = C.Constant(value = np.eye(N=1,M=self.vocab_size+2,k=self.vocab_size+1), dtype = np.float32)
-
         self.sentence_end_index = self.vocab['</s>']
         print('SenEnd',self.sentence_end_index)
-        #self.sentence_start =C.Constant(np.array([w=='<s>' for w in self.vocab], dtype=np.float32), name='start')
-        #self.sentence_end_index = self.vocab['</s>']
         self.sentence_max_length = 0.1
         print('vocab size',self.vocab_size)
         print('dropout', self.dropout)
@@ -99,8 +95,6 @@ class PolyMath:
                 
         q_processed = processed.clone(C.CloneMethod.share, {input_chars:qce, input_glove_words:qgw_ph, input_nonglove_words:qnw_ph})
         c_processed = processed.clone(C.CloneMethod.share, {input_chars:cce, input_glove_words:cgw_ph, input_nonglove_words:cnw_ph})
-   #     a_processed = processed.clone(C.CloneMethod.share, {input_chars:ace, input_glove_words:agw_ph, input_nonglove_words:anw_ph})
-        #a_processed = C.pad(a_processed, pattern=[(0,0),(0,0),(0,2)], mode=C.ops.CONSTANT_PAD, constant_value=0)        
 
         return C.as_block(
             C.combine([c_processed, q_processed]),
@@ -134,7 +128,6 @@ class PolyMath:
         qvw_mask_expanded = C.sequence.broadcast_as(qvw_mask, c_processed)
         S = C.element_select(qvw_mask_expanded, S, C.constant(-1e+30))
         q_attn = C.reshape(C.softmax(S), (-1,1))
-        #q_attn = print_node(q_attn)
         c2q = C.reshape(C.reduce_sum(C.sequence.broadcast_as(qvw, q_attn) * q_attn, axis=0),(-1))
         
         max_col = C.reduce_max(S)
@@ -179,17 +172,13 @@ class PolyMath:
             # Encoder: (input*) --> (h0, c0)
             # Create multiple layers of LSTMs by passing the output of the i-th layer
             # to the (i+1)th layer as its input
-            # Note: We go_backwards for the plain model, but forward for the attention model.
-
-            
             with C.layers.default_options(enable_self_stabilization=True, go_backwards=False):
                 LastRecurrence = C.layers.Recurrence
                 encode = C.layers.Sequential([
                     C.layers.Stabilizer(),
                     C.layers.For(range(self.num_layers-1), lambda:
-                        C.layers.Recurrence(C.layers.LSTM(self.hidden_dim))),
-                    LastRecurrence(C.layers.LSTM(self.hidden_dim), return_full_state=True),
-                    (C.layers.Label('encoded_h'), C.layers.Label('encoded_c')),
+                        C.layers.Recurrence(C.layers.LSTM(2*self.hidden_dim))),
+                    LastRecurrence(C.layers.LSTM(2*self.hidden_dim)),
                 ])
             
             # Decoder: (history*, input*) --> unnormalized_word_logp*
@@ -207,10 +196,9 @@ class PolyMath:
                                                               name='attention_model') # :: (h_enc*, h_dec) -> (h_dec augmented)
                 # layer function
                 @C.Function
-                def decode(history, input, q, q_history):
+                def decode(history, input, q):
                     q = encode(q)
-                    r = C.Dense(self.hidden_dim, activation=C.relu, input_rank=2)(history)\
-                        + C.Dense(self.hidden_dim, activation=C.relu, input_rank=2)(q_history)
+                    r = history
                     r = stab_in(r)
                     for i in range(self.num_layers):
                         rec_block = rec_blocks[i]   # LSTM(hidden_dim)  # :: (dh, dc, x) -> (h, c)
@@ -218,7 +206,7 @@ class PolyMath:
                             @C.Function
                             def lstm_with_attention(dh, dc, x):
                                 h_att = attention_model(input, dh)
-                                q_att = attention_model(q.outputs[0], dh)
+                                q_att = attention_model(q, dh)
                                 x = C.splice(x, h_att)
                                 x = C.splice(x, q_att)
                                 return rec_block(dh, dc, x)
@@ -255,23 +243,20 @@ class PolyMath:
                                     # stop once sentence_end_index was max-scoring output
                                     until_predicate=lambda w: w[...,self.sentence_end_index],
                                     length_increase=self.sentence_max_length)
-                #return input #DEBUG PURPOSE
                 return unfold(initial_state=self.sentence_start, dynamic_axes_like=input)
             return model_greedy
         
         s2smodel = create_model()
       
-   #     print(modelpar.parameters)
         # create the training wrapper for the s2smodel, as well as the criterion function
         model_train = create_model_train(s2smodel)(mod_context, a_onehot, query_context)
         # also wire in a greedy decoder so that we can properly log progress on a validation example
         # This is not used for the actual training process.
         model_greed = create_model_greedy(s2smodel)(mod_context, query_context)
         model_greedy = C.argmax(model_greed,0)
-        #C.combine([model_greedy, model_train]),
         return C.as_block(
             C.combine((model_train, model_greedy)),
-            [(att_context, attention_context),(mod1_context, modeling_context), (a_onehot, aw), (query_context, q_processed)],
+            [(att_context, attention_context),(mod_context, modeling_context), (a_onehot, aw), (query_context, q_processed)],
             'attention_layer',
             'attention_layer')
 

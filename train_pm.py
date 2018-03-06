@@ -3,7 +3,7 @@ import numpy as np
 from polymath import PolyMath
 from squad_utils import metric_max_over_ground_truths, f1_score, exact_match_score
 from itertools import groupby
-from operator import itermgetter
+from operator import itemgetter
 import tsv2ctf
 import os
 import argparse
@@ -264,7 +264,7 @@ def validate_model(i2w, test_data, model, polymath):
         true = one2num.eval({onehot:data[onehot]})
         true_text = format_sequences(np.asarray(true).reshape(-1).tolist(),i2w)
 
-        predout_text = format_sequences(np.asarray(out[testout]).reshape(-1), i2w)
+        predout_text = format_sequences(np.asarray(out[testout]).reshape(-1), i2w, polymath)
       #  print(predout_text)
         testloss = out[loss]
         stat += RL.calc_score(predout_text, true_text)
@@ -297,11 +297,11 @@ def unique_justseen(iterable):
     #[1,2,2,2,3] -> [1,2,3]
     return list(map(next, map(itemgetter(1), groupby(iterable))))
 
-def format_sequences(sequences, i2w):
-#    print(sequences)
+def format_sequences(sequences, i2w, polymath):
     out =  [] 
     for w in unique_justseen(sequences): 
-        if w < 131088 and w != 126355:
+        #if w < 131088 and w != 126355:
+        if w < polymath.wg_dim and w != polymath.sentence_end_index:
             out.append(i2w[w])
     return " ".join(out)
 

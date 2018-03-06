@@ -1,4 +1,4 @@
-# This branch is broken and in development, so it is unlikely to be runnable.
+# This is an experimental branch that adds query attention to decoder.
 
 # Instructions for getting started with bidaf
 
