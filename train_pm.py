@@ -262,7 +262,7 @@ def validate_model(i2w, test_data, model, polymath):
 
         out = model.eval(data, outputs=[testout, loss], as_numpy=True)
         true = one2num.eval({onehot:data[onehot]})
-        true_text = format_sequences(np.asarray(true).reshape(-1).tolist(),i2w)
+        true_text = format_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
 
         predout_text = format_sequences(np.asarray(out[testout]).reshape(-1), i2w, polymath)
       #  print(predout_text)
@@ -344,7 +344,7 @@ def test(i2w ,test_data, model_path, model_file, config_file):
         for data in tsv_reader:
             out = model.eval(data, outputs=[output,loss], as_numpy=False)
             for seq, (raw_text, ctokens, answer, uid) in enumerate(zip(misc['rawctx'], misc['ctoken'], misc['answer'], misc['uid'])):
-                predict_answer = format_sequences(np.asarray(out[output].as_sequences()).reshape(-1), i2w)
+                predict_answer = format_sequences(np.asarray(out[output].as_sequences()).reshape(-1), i2w, polymath)
                 results['query_id'] = int(uid)
                 results['answers'] = [predict_answer]
                 print(results)
