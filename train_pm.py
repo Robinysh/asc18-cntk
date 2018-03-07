@@ -380,6 +380,8 @@ if __name__=='__main__':
         data_path = args['datadir']
         
     #C.try_set_default_device(C.cpu())
+    #C.try_set_default_device(C.gpu(C.Communicator.rank() % 4))
+    C.try_set_default_device(C.gpu(0))
 
     test_data = args['test']
     test_model = args['model']
