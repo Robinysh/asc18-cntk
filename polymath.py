@@ -147,13 +147,14 @@ class PolyMath:
             
     def modeling_layer(self, attention_context):
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
+
         #modeling layer
-        # todo: use dropout in optimized_rnn_stack from cudnn once API exposes it
         mod_context = C.layers.Sequential([
             C.layers.Dropout(self.dropout),
             OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='model_rnn0'),
             C.layers.Dropout(self.dropout),
-            OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='model_rnn1')])(att_context)
+            OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='model_rnn1', return_full_state=True),
+])(att_context)
 
         return C.as_block(
             mod_context,
@@ -161,12 +162,14 @@ class PolyMath:
             'modeling_layer',
             'modeling_layer')
 
-    def output_layer(self, attention_context, modeling_context, aw, q_processed):
+    def output_layer(self, attention_context, modeling_context_h, modeling_context_c, aw, q_processed):
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
         query_context = C.placeholder(shape=(2*self.hidden_dim,))
-        mod_context = C.placeholder(shape=(2*self.hidden_dim,))
+        #Cannot pass list with multiple output(?) as function argument so the code is a bit hacky
+        mod_context_h = C.placeholder(shape=(2*self.hidden_dim,))
+        mod_context_c = C.placeholder(shape=(2*self.hidden_dim,))
+        #mod_context  = C.combine([mod_context_h, mod_context_c])
         a_onehot = C.placeholder(shape=(self.vocab_size+1,))
-        #label_processed = C.placeholder(shape=(2*self.hidden_dim,))
 
         def create_model():
             # Encoder: (input*) --> (h0, c0)
@@ -178,7 +181,7 @@ class PolyMath:
                     C.layers.Stabilizer(),
                     C.layers.For(range(self.num_layers-1), lambda:
                         C.layers.Recurrence(C.layers.LSTM(2*self.hidden_dim))),
-                    LastRecurrence(C.layers.LSTM(2*self.hidden_dim)),
+                    OptimizedRnnStack(self.hidden_dim, return_full_state=True),
                 ])
             
             # Decoder: (history*, input*) --> unnormalized_word_logp*
@@ -194,25 +197,34 @@ class PolyMath:
                 # attention model
                 attention_model = C.layers.AttentionModel(self.attention_dim, 
                                                               name='attention_model') # :: (h_enc*, h_dec) -> (h_dec augmented)
+                hstate_dense = C.layers.Dense(self.hidden_dim, activation=C.tanh, input_rank=1)
+                cstate_dense = C.layers.Dense(self.hidden_dim, activation=C.tanh, input_rank=1)
                 # layer function
                 @C.Function
-                def decode(history, input, q):
+                def decode(history, inputh, inputc, q):
                     q = encode(q)
                     r = history
                     r = stab_in(r)
                     for i in range(self.num_layers):
                         rec_block = rec_blocks[i]   # LSTM(hidden_dim)  # :: (dh, dc, x) -> (h, c)
+                        encoder_last_hstate = C.sequence.last(q.outputs[0])
+                        encoder_last_cstate = C.sequence.last(q.outputs[1])
+                        input_last_hstate = C.sequence.last(inputh)
+                        input_last_cstate = C.sequence.last(inputc)
+                        initial_hstate = hstate_dense(C.splice(encoder_last_hstate, input_last_hstate))
+                        initial_cstate = cstate_dense(C.splice(encoder_last_cstate, input_last_cstate))
+
                         if i == 0:
                             @C.Function
                             def lstm_with_attention(dh, dc, x):
-                                h_att = attention_model(input, dh)
-                                q_att = attention_model(q, dh)
-                                x = C.splice(x, h_att)
-                                x = C.splice(x, q_att)
+                                h_att = attention_model(inputh, dh)
+                                q_att = attention_model(q.outputs[0], dh)
+                                att = C.splice(h_att, q_att)
+                                x = C.splice(x, att)
                                 return rec_block(dh, dc, x)
-                            r = C.layers.Recurrence(lstm_with_attention)(r)
+                            r = C.layers.RecurrenceFrom(lstm_with_attention)(initial_hstate, initial_cstate, r)
                         else:
-                            r = C.layers.Recurrence(rec_block)(r)
+                            r = C.layers.RecurrenceFrom(rec_block)(initial_hstate, initial_cstate, r)
                     r = stab_out(r)
                     r = proj_out(r)
                     r = C.layers.Label('out_proj_out')(r)
@@ -223,40 +235,40 @@ class PolyMath:
             # model used in training (history is known from labels)
             # note: the labels must NOT contain the initial <s>
             @C.Function
-            def model_train(input, labels, query): # (input*, labels*) --> (word_logp*)
+            def model_train(inputh, inputc, labels, query): # (input*, labels*) --> (word_logp*)
 
                 # The input to the decoder always starts with the special label sequence start token.
                 # Then, use the previous value of the label sequence (for training) or the output (for execution).
                 past_labels = C.layers.Delay(initial_state=self.sentence_start)(labels)
-                return s2smodel(past_labels, input, query)
+                return s2smodel(past_labels, inputh, inputc, query)
             return model_train
 
         def create_model_greedy(s2smodel):
             # model used in (greedy) decoding (inferencing) (history is decoder's own output)
             @C.Function
-            def model_greedy(input, query): # (input*) --> (word_sequence*)
+            def model_greedy(inputh, inputc, query): # (input*) --> (word_sequence*)
                 # Decoding is an unfold() operation starting from sentence_start.
                 # We must transform s2smodel (history*, input* -> word_logp*) into a generator (history* -> output*)
                 # which holds 'input' in its closure.
                 unfold = C.layers.UnfoldFrom(\
-                                    lambda history: s2smodel(history, input, query) >> C.hardmax,
+                                    lambda history: s2smodel(history, inputh, inputc, query) >> C.hardmax,
                                     # stop once sentence_end_index was max-scoring output
                                     until_predicate=lambda w: w[...,self.sentence_end_index],
                                     length_increase=self.sentence_max_length)
-                return unfold(initial_state=self.sentence_start, dynamic_axes_like=input)
+                return unfold(initial_state=self.sentence_start, dynamic_axes_like=inputh)
             return model_greedy
         
         s2smodel = create_model()
       
         # create the training wrapper for the s2smodel, as well as the criterion function
-        model_train = create_model_train(s2smodel)(mod_context, a_onehot, query_context)
+        model_train = create_model_train(s2smodel)(mod_context_h, mod_context_c, a_onehot, query_context)
         # also wire in a greedy decoder so that we can properly log progress on a validation example
         # This is not used for the actual training process.
-        model_greed = create_model_greedy(s2smodel)(mod_context, query_context)
+        model_greed = create_model_greedy(s2smodel)(mod_context_h, mod_context_c, query_context)
         model_greedy = C.argmax(model_greed,0)
         return C.as_block(
             C.combine((model_train, model_greedy)),
-            [(att_context, attention_context),(mod_context, modeling_context), (a_onehot, aw), (query_context, q_processed)],
+            [(att_context, attention_context),(mod_context_h, modeling_context_h), (mod_context_c, modeling_context_c), (a_onehot, aw), (query_context, q_processed)],
             'attention_layer',
             'attention_layer')
 
@@ -300,7 +312,7 @@ class PolyMath:
      
         # output layer
         #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
-        outputs = self.output_layer(att_context, mod_context, aw, q_processed)
+        outputs = self.output_layer(att_context, mod_context[0], mod_context[1], aw, q_processed)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
    
        

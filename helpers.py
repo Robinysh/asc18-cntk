@@ -2,18 +2,24 @@ import numpy as np
 import cntk as C
 from cntk.layers.blocks import _INFERRED
 
-def OptimizedRnnStack(hidden_dim, num_layers=1, recurrent_op='lstm', bidirectional=False, use_cudnn=True, name=''):
-    if use_cudnn:
+def OptimizedRnnStack(hidden_dim, num_layers=1, recurrent_op='lstm', bidirectional=False, use_cudnn=True, name='', return_full_state=False):
+    if use_cudnn and not return_full_state:
         W = C.parameter(_INFERRED + (hidden_dim,), init=C.glorot_uniform())
         def func(x):
             return C.optimized_rnnstack(x, W, hidden_dim, num_layers, bidirectional, recurrent_op=recurrent_op, name=name)
         return func
-    else:
+    elif not return_full_state:
         def func(x):
             return C.splice(
                         C.layers.Recurrence(C.layers.LSTM(hidden_dim))(x),
                         C.layers.Recurrence(C.layers.LSTM(hidden_dim), go_backwards=True)(x),
                         name=name)
+        return func
+    else:
+        def func(x):
+            layer1 = C.layers.Recurrence(C.layers.LSTM(hidden_dim), return_full_state=True)(x)
+            layer2 = C.layers.Recurrence(C.layers.LSTM(hidden_dim), return_full_state=True, go_backwards=True)(x)
+            return C.combine([C.splice(layer1.outputs[0], layer2.outputs[0]), C.splice(layer1.outputs[1], layer2.outputs[1])])
         return func
 
 def HighwayBlock(dim, # ideally this should be inferred, but times does not allow inferred x inferred parameter for now

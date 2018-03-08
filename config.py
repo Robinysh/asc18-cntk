@@ -25,7 +25,7 @@ training_config = {
     'lr'                : 0.05,
     'train_data'        : 'train.ctf',  # or 'train.tsv'
     'val_data'          : 'dev.ctf',
-    'val_interval'      : 4,       # interval in epochs to run validation
+    'val_interval'      : 5,       # interval in epochs to run validation
     'stop_after'        : 100,       # num epochs to stop if no CV improvement
     'minibatch_seqs'    : 16,      # num sequences of minibatch, when using tsv reader, per worker
     'distributed_after' : 0,       # num sequences after which to start distributed training
