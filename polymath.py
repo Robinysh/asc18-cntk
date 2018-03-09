@@ -85,7 +85,7 @@ class PolyMath:
         embedded = C.splice(
             C.reshape(self.charcnn(input_chars), self.convs),
             self.embed()(input_glove_words, input_nonglove_words), name='splice_embed')
-        highway = HighwayNetwork(dim=2*self.hidden_dim , highway_layers=self.highway_layers)(embedded)
+        highway = HighwayNetwork(dim=2*self.hidden_dim, highway_layers=self.highway_layers)(embedded)
         highway_drop = C.layers.Dropout(self.dropout)(highway)
         processed = OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='input_rnn')(highway_drop)
         
@@ -170,6 +170,18 @@ class PolyMath:
         mod_context_c = C.placeholder(shape=(2*self.hidden_dim,))
         #mod_context  = C.combine([mod_context_h, mod_context_c])
         a_onehot = C.placeholder(shape=(self.vocab_size+1,))
+
+        start_logits = C.layers.Dense(1, name='out_start')(C.dropout(C.splice(mod_context, att_context), self.dropout))
+        start_hardmax = seq_hardmax(start_logits)
+        att_mod_ctx = C.sequence.last(C.sequence.gather(mod_context, start_hardmax))
+        att_mod_ctx_expanded = C.sequence.broadcast_as(att_mod_ctx, att_context)
+        end_input = C.splice(att_context, mod_context, att_mod_ctx_expanded, mod_context * att_mod_ctx_expanded)
+        m2 = OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='output_rnn')(end_input)
+        end_logits = C.layers.Dense(1, name='out_end')(C.dropout(C.splice(m2, att_context), self.dropout))
+
+     
+
+
 
         def create_model():
             # Encoder: (input*) --> (h0, c0)
@@ -267,7 +279,7 @@ class PolyMath:
         model_greed = create_model_greedy(s2smodel)(mod_context_h, mod_context_c, query_context)
         model_greedy = C.argmax(model_greed,0)
         return C.as_block(
-            C.combine((model_train, model_greedy)),
+            C.combine((model_train, model_greedy, start_logits, end_logits)),
             [(att_context, attention_context),(mod_context_h, modeling_context_h), (mod_context_c, modeling_context_c), (a_onehot, aw), (query_context, q_processed)],
             'attention_layer',
             'attention_layer')
@@ -299,6 +311,8 @@ class PolyMath:
       #  aw = C.sequence.input_variable(self.vocab_size+2, is_sparse=False, sequence_axis = a ,name = 'aw')
         cc = C.input_variable((1,self.word_size), dynamic_axes=[b,c], name='cc')
         qc = C.input_variable((1,self.word_size), dynamic_axes=[b,q], name='qc')
+        ab = C.input_variable(self.a_dim, dynamic_axes=[b,c], name='ab')
+        ae = C.input_variable(self.a_dim, dynamic_axes=[b,c], name='ae')
 #        ac = C.input_variable((1,self.word_size), dynamic_axes=[b,a], name='ac')
 
         #input layer
@@ -311,7 +325,7 @@ class PolyMath:
         mod_context = self.modeling_layer(att_context) 
      
         # output layer
-        #test_output, train_logits = self.output_layer(mod_context, q_processed, a_processed)
+        #test_output, train_logits, start_logits, end_logits = self.output_layer(mod_context, q_processed, a_processed)
         outputs = self.output_layer(att_context, mod_context[0], mod_context[1], aw, q_processed)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
    
@@ -322,7 +336,12 @@ class PolyMath:
         #aw = print_node(aw)
         seq_loss = self.create_criterion_function()
         loss = seq_loss(train_logits, aw) #TODO Feed onehot answer into it
+
+        start_loss = seq_loss(start_logits, ab)
+        end_loss = seq_loss(end_logits, ae)
+        new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
  
+        loss += self.pointer_importance*new_loss
         # loss
         #start_loss = seq_loss(start_logits)
         #end_loss = seq_loss(end_logits)

@@ -35,6 +35,8 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
                 context_ng_words = C.io.StreamDef('cnw', shape=polymath.wn_dim,     is_sparse=True),
                 query_ng_words   = C.io.StreamDef('qnw', shape=polymath.wn_dim,     is_sparse=True),
                 answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size + 1,     is_sparse=True),
+                answer_begin     = C.io.StreamDef('ab',  shape=polymath.a_dim,      is_sparse=False),
+                answer_end       = C.io.StreamDef('ae',  shape=polymath.a_dim,      is_sparse=False),
                 context_chars    = C.io.StreamDef('cc',  shape=polymath.word_size,  is_sparse=False),
                 query_chars      = C.io.StreamDef('qc',  shape=polymath.word_size,  is_sparse=False))),
         randomize=randomize,
@@ -47,7 +49,9 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
         argument_by_name(func, 'qnw'): mb_source.streams.query_ng_words,
         argument_by_name(func, 'aw' ): mb_source.streams.answer_words,
         argument_by_name(func, 'cc' ): mb_source.streams.context_chars,
-        argument_by_name(func, 'qc' ): mb_source.streams.query_chars
+        argument_by_name(func, 'qc' ): mb_source.streams.query_chars,
+        argument_by_name(func, 'ab' ): mb_source.streams.answer_begin,
+        argument_by_name(func, 'ae' ): mb_source.streams.answer_end
     }
     return mb_source, input_map
 
@@ -57,7 +61,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
         batch_count = 0
         while not(eof and (batch_count % num_workers) == 0):
             batch_count += 1
-            batch={'cwids':[], 'qwids':[], 'awids':[], 'ccids':[], 'qcids':[], 'acids':[]}
+            batch={'cwids':[], 'qwids':[], 'awids':[], 'baidx':[], 'eaidx':[], 'ccids':[], 'qcids':[], 'acids':[]}
 
             while not eof and len(batch['cwids']) < seqs:
                 line = f.readline()
@@ -69,11 +73,13 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                     import re
                     misc['uid'].append(re.match('^([^\t]*)', line).groups()[0])
 
-                ctokens, qtokens, atokens, cwids, qwids, awids, ccids, qcids, acids = tsv2ctf.tsv_iter(line, polymath.vocab, polymath.chars, is_test, misc)
+                ctokens, qtokens, atokens, cwids, qwids, awids, baidx, eaidx, ccids, qcids, acids = tsv2ctf.tsv_iter(line, polymath.vocab, polymath.chars, is_test, misc)
 
                 batch['cwids'].append(cwids)
                 batch['qwids'].append(qwids)
                 batch['awids'].append(awids)
+                batch['baidx'].append(baidx)
+                batch['eaidx'].append(eaidx)
                 batch['ccids'].append(ccids)
                 batch['qcids'].append(qcids)
                 batch['acids'].append(acids)
@@ -81,15 +87,13 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
             if len(batch['cwids']) > 0:
                 context_g_words  = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in cwids] for cwids in batch['cwids']], polymath.wg_dim)
                 context_ng_words = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in cwids] for cwids in batch['cwids']], polymath.wn_dim)
-                context_ng_words = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in cwids] for cwids in batch['cwids']], polymath.wn_dim)
                 query_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in qwids] for qwids in batch['qwids']], polymath.wg_dim)
                 query_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in qwids] for qwids in batch['qwids']], polymath.wn_dim)
-#                answer_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in awids] for awids in batch['awids']], polymath.wg_dim)
-#                answer_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in awids] for awids in batch['awids']], polymath.wn_dim)
                 answer_words   = C.Value.one_hot([[i for i in awids] for awids in batch['awids']], polymath.vocab_size+1)
                 context_chars = [np.asarray([[[c for c in cc+[0]*max(0,polymath.word_size-len(cc))]] for cc in ccid], dtype=np.float32) for ccid in batch['ccids']]
                 query_chars   = [np.asarray([[[c for c in qc+[0]*max(0,polymath.word_size-len(qc))]] for qc in qcid], dtype=np.float32) for qcid in batch['qcids']]
-#                answer_chars   = [np.asarray([[[c for c in ac+[0]*max(0,polymath.word_size-len(ac))]] for ac in acid], dtype=np.float32) for acid in batch['acids']]
+                answer_begin = [np.asarray(ab, dtype=np.float32) for ab in batch['baidx']]
+                answer_end   = [np.asarray(ae, dtype=np.float32) for ae in batch['eaidx']]
 
                 yield { argument_by_name(func, 'cgw'): context_g_words,
                         argument_by_name(func, 'qgw'): query_g_words,
@@ -97,7 +101,9 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                         argument_by_name(func, 'qnw'): query_ng_words,
                         argument_by_name(func, 'aw' ): answer_words,
                         argument_by_name(func, 'cc' ): context_chars,
-                        argument_by_name(func, 'qc' ): query_chars}
+                        argument_by_name(func, 'qc' ): query_chars,
+                        argument_by_name(func, 'ab' ): answer_begin,
+                        argument_by_name(func, 'ae' ): answer_end }
             else:
                 yield {} # need to generate empty batch for distributed training
 
@@ -105,8 +111,6 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
     polymath = PolyMath(config_file)
     z, loss = polymath.model()
     training_config = importlib.import_module(config_file).training_config
-#    print(z)
-#    print(z.parameters)    
     max_epochs = training_config['max_epochs']
     log_freq = training_config['log_freq']
 
@@ -238,8 +242,8 @@ def symbolic_best_span(begin, end):
 def validate_model(i2w, test_data, model, polymath):
     print('validating')
     RL = rouge.Rouge()
-    loss = model.outputs[1]
     testout = model.outputs[0]  # according to model.shape
+    loss = model.outputs[1]
 
     root = C.as_composite(loss.owner)
  
@@ -332,9 +336,9 @@ def test(i2w ,test_data, model_path, model_file, config_file):
     #C.try_set_default_device(C.cpu())
     polymath = PolyMath(config_file)
     model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
+    output       = model.outputs[0]
     loss         = model.outputs[1]
     root = C.as_composite(loss.owner)
-    output       = model.outputs[0]
 
     batch_size = 1 # in sequences
     misc = {'rawctx':[], 'ctoken':[], 'answer':[], 'uid':[]}
