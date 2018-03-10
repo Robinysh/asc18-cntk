@@ -242,15 +242,27 @@ def symbolic_best_span(begin, end):
 def validate_model(i2w, test_data, model, polymath):
     print('validating')
     RL = rouge.Rouge()
+    print(model.shape)
     testout = model.outputs[0]  # according to model.shape
-    loss = model.outputs[1]
-
+    loss = model.outputs[3]
+    start_logits = model.outputs[1]   #not finish
+    end_logits = model.outputs[2]       #not finish
     root = C.as_composite(loss.owner)
- 
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
-
+    begin_label = argument_by_name(root, 'ab')
+    end_label   = argument_by_name(root, 'ae')
     onehot = argument_by_name(root, 'aw')
+    context_g_w = argument_by_name(root, 'cgw')
+    context_ng_w = argument_by_name(root, 'cnw')
+    context_w = C.splice(context_g_w,context_ng_w) 
 
+    begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_label.dynamic_axes[1], needs_gradient=True)
+    end_prediction = C.sequence.input_variable(1, sequence_axis=end_label.dynamic_axes[1], needs_gradient=True) 
+    predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
+    true_span = C.layers.Recurrence(C.plus)(begin_label - C.sequence.past_value(end_label))  
+
+    
+    context_num = C.argmax(context_w,0)
     one2num = C.argmax(onehot,0)
 
     minibatch_size = 128
@@ -264,11 +276,20 @@ def validate_model(i2w, test_data, model, polymath):
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
 
-        out = model.eval(data, outputs=[testout, loss], as_numpy=True)
+        out = model.eval(data, outputs=[testout,start_logits,end_logits, loss], as_numpy=True)
         true = one2num.eval({onehot:data[onehot]})
-        true_text = format_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
+        context = context_num.eval({context_g_w:data[context_g_w], context_ng_w:data[context_ng_w]})
+        g = best_span_score.grad({begin_prediction:out[start_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
+        other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
+        span = predicted_span.eval((other_input_map))
+        seq_where = np.argwhere(span)[:,0]
+        span_begin = np.min(seq_where)
+        span_end = np.max(seq_where)
+        predict_answer = get_answer(context, context, span_begin, span_end)
 
-        predout_text = format_sequences(np.asarray(out[testout]).reshape(-1), i2w, polymath)
+
+        true_text = format_true_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
+        predout_text = format_predict_sequences(np.asarray(out[testout]).reshape(-1), predict_answer , i2w, polymath)
       #  print(predout_text)
         testloss = out[loss]
         stat += RL.calc_score(predout_text, true_text)
@@ -301,9 +322,20 @@ def unique_justseen(iterable):
     #[1,2,2,2,3] -> [1,2,3]
     return list(map(next, map(itemgetter(1), groupby(iterable))))
 
-def format_sequences(sequences, i2w, polymath):
+def format_true_sequences(sequences, i2w, polymath):
     out =  [] 
     for w in unique_justseen(sequences): 
+        #if w < 131088 and w != 126355:
+        if w < polymath.wg_dim and w != polymath.sentence_end_index:
+            out.append(i2w[w])
+    return " ".join(out)
+
+def format_predict_sequences(sequences,span_ans , i2w, polymath):
+    out =  []
+    uni_seq = unique_justseen(sequences)
+    if len(uni_seq)==1 and uniseq[0]=polymath.unk_index:
+        out.append(i2w[w])
+    for w in uni_seq:
         #if w < 131088 and w != 126355:
         if w < polymath.wg_dim and w != polymath.sentence_end_index:
             out.append(i2w[w])

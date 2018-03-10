@@ -32,9 +32,12 @@ class PolyMath:
         self.two_step = model_config['two_step']
         self.use_cudnn = model_config['use_cudnn']
         self.use_sparse = False
-       
+        self.a_dim=1
         self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+1, sparse_output=self.use_sparse) 
         self.sentence_end_index = self.vocab['</s>']
+        self.unk_index = self.vocab['<UNK>']
+
+
         print('SenEnd',self.sentence_end_index)
         self.sentence_max_length = 0.1
         print('vocab size',self.vocab_size)
@@ -269,7 +272,7 @@ class PolyMath:
                                     length_increase=self.sentence_max_length)
                 return unfold(initial_state=self.sentence_start, dynamic_axes_like=inputh)
             return model_greedy
-        
+       
         s2smodel = create_model()
       
         # create the training wrapper for the s2smodel, as well as the criterion function
@@ -347,4 +350,4 @@ class PolyMath:
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return C.combine([test_output]), loss
+        return outputs, loss
