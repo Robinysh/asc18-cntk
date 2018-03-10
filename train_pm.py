@@ -18,6 +18,8 @@ model_name = "pm.model"
 
 def argument_by_name(func, name):
     found = [arg for arg in func.arguments if arg.name == name]
+    print(found)
+    print(func.arguments)
     if len(found) == 0:
         raise ValueError('no matching names in arguments')
     elif len(found) > 1:
@@ -34,6 +36,7 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
                 query_g_words    = C.io.StreamDef('qgw', shape=polymath.wg_dim,     is_sparse=True),
                 context_ng_words = C.io.StreamDef('cnw', shape=polymath.wn_dim,     is_sparse=True),
                 query_ng_words   = C.io.StreamDef('qnw', shape=polymath.wn_dim,     is_sparse=True),
+                context_words    = C.io.StreamDef('cw',  shape=polymath.vocab_size, is_sparse=True),
                 answer_words     = C.io.StreamDef('aw',  shape=polymath.vocab_size + 1,     is_sparse=True),
                 answer_begin     = C.io.StreamDef('ab',  shape=polymath.a_dim,      is_sparse=False),
                 answer_end       = C.io.StreamDef('ae',  shape=polymath.a_dim,      is_sparse=False),
@@ -51,7 +54,9 @@ def create_mb_and_map(func, data_file, polymath, randomize=True, repeat=True):
         argument_by_name(func, 'cc' ): mb_source.streams.context_chars,
         argument_by_name(func, 'qc' ): mb_source.streams.query_chars,
         argument_by_name(func, 'ab' ): mb_source.streams.answer_begin,
-        argument_by_name(func, 'ae' ): mb_source.streams.answer_end
+        argument_by_name(func, 'ae' ): mb_source.streams.answer_end,
+        argument_by_name(func, 'cw' ): mb_source.streams.context_words
+      
     }
     return mb_source, input_map
 
@@ -86,6 +91,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
 
             if len(batch['cwids']) > 0:
                 context_g_words  = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in cwids] for cwids in batch['cwids']], polymath.wg_dim)
+                context_words  = C.Value.one_hot([[i for i in cwids] for cwids in batch['cwids']], polymath.vocab_size)
                 context_ng_words = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in cwids] for cwids in batch['cwids']], polymath.wn_dim)
                 query_g_words    = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in qwids] for qwids in batch['qwids']], polymath.wg_dim)
                 query_ng_words   = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i < polymath.wg_dim else i - polymath.wg_dim for i in qwids] for qwids in batch['qwids']], polymath.wn_dim)
@@ -99,6 +105,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                         argument_by_name(func, 'qgw'): query_g_words,
                         argument_by_name(func, 'cnw'): context_ng_words,
                         argument_by_name(func, 'qnw'): query_ng_words,
+                        argument_by_name(func, 'cw' ): context_words,
                         argument_by_name(func, 'aw' ): answer_words,
                         argument_by_name(func, 'cc' ): context_chars,
                         argument_by_name(func, 'qc' ): query_chars,
@@ -174,7 +181,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             #TODO replace with rougel with external script(possibly)
-            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
+            #val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
             #if epoch_stat['best_val_err'] > val_err:
             #    epoch_stat['best_val_err'] = val_err
             #    epoch_stat['best_since'] = 0
@@ -242,19 +249,18 @@ def symbolic_best_span(begin, end):
 def validate_model(i2w, test_data, model, polymath):
     print('validating')
     RL = rouge.Rouge()
-    print(model.shape)
-    testout = model.outputs[0]  # according to model.shape
-    loss = model.outputs[3]
-    start_logits = model.outputs[1]   #not finish
-    end_logits = model.outputs[2]       #not finish
+    testout = model.outputs[1]  # according to model.shape
+    start_logits = model.outputs[2]   #not finish
+    end_logits = model.outputs[3]       #not finish
+    loss = model.outputs[4]
     root = C.as_composite(loss.owner)
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
     begin_label = argument_by_name(root, 'ab')
     end_label   = argument_by_name(root, 'ae')
     onehot = argument_by_name(root, 'aw')
-    context_g_w = argument_by_name(root, 'cgw')
-    context_ng_w = argument_by_name(root, 'cnw')
-    context_w = C.splice(context_g_w,context_ng_w) 
+    context_w = argument_by_name(root, 'cw')
+
+
 
     begin_prediction = C.sequence.input_variable(1, sequence_axis=begin_label.dynamic_axes[1], needs_gradient=True)
     end_prediction = C.sequence.input_variable(1, sequence_axis=end_label.dynamic_axes[1], needs_gradient=True) 
@@ -263,6 +269,8 @@ def validate_model(i2w, test_data, model, polymath):
 
     
     context_num = C.argmax(context_w,0)
+
+    
     one2num = C.argmax(onehot,0)
 
     minibatch_size = 128
@@ -278,7 +286,8 @@ def validate_model(i2w, test_data, model, polymath):
 
         out = model.eval(data, outputs=[testout,start_logits,end_logits, loss], as_numpy=True)
         true = one2num.eval({onehot:data[onehot]})
-        context = context_num.eval({context_g_w:data[context_g_w], context_ng_w:data[context_ng_w]})
+        context = context_num.eval({context_w:data[context_w]})
+
         g = best_span_score.grad({begin_prediction:out[start_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
         other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
         span = predicted_span.eval((other_input_map))
@@ -333,7 +342,7 @@ def format_true_sequences(sequences, i2w, polymath):
 def format_predict_sequences(sequences,span_ans , i2w, polymath):
     out =  []
     uni_seq = unique_justseen(sequences)
-    if len(uni_seq)==1 and uniseq[0]=polymath.unk_index:
+    if len(uni_seq)==1 and uni_seq[0]==polymath.unk_index:
         out.append(i2w[w])
     for w in uni_seq:
         #if w < 131088 and w != 126355:

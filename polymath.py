@@ -163,7 +163,9 @@ class PolyMath:
             'modeling_layer',
             'modeling_layer')
 
-    def output_layer(self, attention_context, model_context, aw, q_processed, c_processed):
+    def output_layer(self, attention_context, model_context, aw, q_processed, c_processed, cw):
+        cw_ph  = C.placeholder()
+
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
         query_processed = C.placeholder(shape=(2*self.hidden_dim,))
         context_processed = C.placeholder(shape=(2*self.hidden_dim,))
@@ -282,10 +284,11 @@ class PolyMath:
         model_train = create_model_train(s2smodel)(a_onehot, query_processed, context_processed, start_logits, end_logits)
         model_greed = create_model_greedy(s2smodel)(query_processed, context_processed, start_logits, end_logits)
         model_greedy = C.argmax(model_greed,0)
+        model_train += 0*cw_ph[0]
 
         return C.as_block(
             C.combine((model_train, model_greedy, start_logits, end_logits)),
-            [(att_context, attention_context), (mod_context, model_context), (a_onehot, aw), (query_processed, q_processed), (context_processed, c_processed)],
+            [(att_context, attention_context), (mod_context, model_context), (a_onehot, aw), (query_processed, q_processed), (context_processed, c_processed),(cw_ph,cw)],
             'attention_layer',
             'attention_layer')
 
@@ -308,6 +311,7 @@ class PolyMath:
         b = C.Axis.default_batch_axis()
         cgw = C.input_variable(self.wg_dim, dynamic_axes=[b,c], is_sparse=True, name='cgw')
         cnw = C.input_variable(self.wn_dim, dynamic_axes=[b,c], is_sparse=True, name='cnw')
+        cw = C.input_variable(self.wn_dim, dynamic_axes=[b,c], is_sparse=True, name='cw')
         qgw = C.input_variable(self.wg_dim, dynamic_axes=[b,q], is_sparse=True, name='qgw')
         qnw = C.input_variable(self.wn_dim, dynamic_axes=[b,q], is_sparse=True, name='qnw')
         aw = C.input_variable(self.vocab_size+1, dynamic_axes=[b,a], is_sparse=False, name='aw')
@@ -327,11 +331,9 @@ class PolyMath:
         mod_context = self.modeling_layer(att_context) 
      
         # output layer
-        outputs = self.output_layer(att_context, mod_context, aw, q_processed, c_processed)
+        outputs = self.output_layer(att_context, mod_context, aw, q_processed, c_processed, cw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
-        start_logits, end_logits = outputs[2], outputs[3]
-   
-       
+        start_logits, end_logits = outputs[2], outputs[3] 
         #test_output, train_logits = self.output_layer(mod_context, aw)
         #test_output = print_node(test_output)        
         #train_logits =  print_node(train_logits)
@@ -343,10 +345,13 @@ class PolyMath:
         end_loss = seq_loss(end_logits, ae)
         new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
  
-        loss += self.pointer_importance*new_loss
+        pointer_loss = self.pointer_importance*new_loss
+        total_loss = loss + pointer_loss
+        pointer_loss = print_node(pointer_loss)
+        loss = print_node(loss)
         # loss
         #start_loss = seq_loss(start_logits)
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return outputs, loss
+        return outputs, total_loss
