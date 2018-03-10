@@ -291,11 +291,13 @@ def validate_model(i2w, test_data, model, polymath):
  
 
         g = best_span_score.grad({begin_prediction:out[start_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
+#        print(g[begin_prediction], g[end_prediction])
         other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
         span = predicted_span.eval((other_input_map))
-        seq_where = np.argwhere(span)[:,0]
-        span_begin = np.min(seq_where)
-        span_end = np.max(seq_where)
+#        print(span)
+   #     seq_where = np.argwhere(span)[:,0]
+   #     span_begin = np.min(seq_where)
+   #     span_end = np.max(seq_where)
   #      predict_answer = get_answer(out[context], out[context], span_begin, span_end)
         pred_out = np.asarray(out[context]).reshape(-1).tolist()
         predict_answer = pred_out[span_begin:span_end+1]
@@ -348,7 +350,7 @@ def format_predict_sequences(sequences,span_ans , i2w, polymath):
     out =  []
     uni_seq = unique_justseen(sequences)
     if len(uni_seq)==1 and uni_seq[0]==polymath.unk_index:
-        out.append(i2w[w])
+        uni_seq=span_ans
     for w in uni_seq:
         if w < polymath.wg_dim and w != polymath.sentence_end_index:
             out.append(i2w[w])
