@@ -18,8 +18,8 @@ model_name = "pm.model"
 
 def argument_by_name(func, name):
     found = [arg for arg in func.arguments if arg.name == name]
-    print(found)
-    print(func.arguments)
+
+
     if len(found) == 0:
         raise ValueError('no matching names in arguments')
     elif len(found) > 1:
@@ -181,7 +181,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             #TODO replace with rougel with external script(possibly)
-            #val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
+            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
             #if epoch_stat['best_val_err'] > val_err:
             #    epoch_stat['best_val_err'] = val_err
             #    epoch_stat['best_since'] = 0
@@ -252,13 +252,14 @@ def validate_model(i2w, test_data, model, polymath):
     testout = model.outputs[1]  # according to model.shape
     start_logits = model.outputs[2]   #not finish
     end_logits = model.outputs[3]       #not finish
-    loss = model.outputs[4]
+    context = model.outputs[4]
+    loss = model.outputs[5]
     root = C.as_composite(loss.owner)
     mb_source, input_map = create_mb_and_map(root, test_data, polymath, randomize=False, repeat=False)
     begin_label = argument_by_name(root, 'ab')
     end_label   = argument_by_name(root, 'ae')
     onehot = argument_by_name(root, 'aw')
-    context_w = argument_by_name(root, 'cw')
+  
 
 
 
@@ -268,7 +269,7 @@ def validate_model(i2w, test_data, model, polymath):
     true_span = C.layers.Recurrence(C.plus)(begin_label - C.sequence.past_value(end_label))  
 
     
-    context_num = C.argmax(context_w,0)
+    best_span_score = symbolic_best_span(begin_prediction, end_prediction)
 
     
     one2num = C.argmax(onehot,0)
@@ -278,15 +279,15 @@ def validate_model(i2w, test_data, model, polymath):
 
     stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
     loss_sum = 0
-
+    cnt = 0
     while True:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
 
-        out = model.eval(data, outputs=[testout,start_logits,end_logits, loss], as_numpy=True)
+        out = model.eval(data, outputs=[testout,start_logits,end_logits, context,loss], as_numpy=True)
         true = one2num.eval({onehot:data[onehot]})
-        context = context_num.eval({context_w:data[context_w]})
+ 
 
         g = best_span_score.grad({begin_prediction:out[start_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
         other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
@@ -294,9 +295,14 @@ def validate_model(i2w, test_data, model, polymath):
         seq_where = np.argwhere(span)[:,0]
         span_begin = np.min(seq_where)
         span_end = np.max(seq_where)
-        predict_answer = get_answer(context, context, span_begin, span_end)
-
-
+  #      predict_answer = get_answer(out[context], out[context], span_begin, span_end)
+        pred_out = np.asarray(out[context]).reshape(-1).tolist()
+        predict_answer = pred_out[span_begin:span_end+1]
+        if cnt ==0:
+            print(span_begin,span_end)
+            print(predict_answer)
+            print(format_true_sequences(predict_answer,i2w,polymath))
+            cnt+=1
         true_text = format_true_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
         predout_text = format_predict_sequences(np.asarray(out[testout]).reshape(-1), predict_answer , i2w, polymath)
       #  print(predout_text)

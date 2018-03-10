@@ -19,12 +19,12 @@ model_config = {
 }
 
 training_config = {
-    'minibatch_size'    : 16,    # in samples when using ctf reader, per worker
-    'epoch_size'        : 2,   # in sequences, when using ctf reader
-    #'epoch_size'        : 44961,   # in sequences, when using ctf reader
+    'minibatch_size'    : 128,    # in samples when using ctf reader, per worker
+    #'epoch_size'        : 2,   # in sequences, when using ctf reader
+    'epoch_size'        : 44961,   # in sequences, when using ctf reader
     'log_freq'          : 100,     # in minibatchs
     'max_epochs'        : 300,
-    'lr'                : 0.05,
+    'lr'                : 0.005,
     'train_data'        : 'train.ctf',  # or 'train.tsv'
     'val_data'          : 'dev.ctf',
     'val_interval'      : 1,       # interval in epochs to run validation
