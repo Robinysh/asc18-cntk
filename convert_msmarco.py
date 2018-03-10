@@ -107,6 +107,7 @@ def smith_waterman(tt,bb):
 
 
 def preprocess(s):
+    s = re.sub(r"(?<=[a-zA-Z])(\.)(?=[a-zA-Z])", ". ", s)
     return s.replace("''", '" ').replace("``", '" ')
 
 def tokenize(s, context_mode=False ):
@@ -145,6 +146,7 @@ def convert(file, outfile, is_test):
                         for a in j['answers']:
                             bad = False
                             answer = preprocess(a)
+                            print(answer)
                             atokens = trim_empty(tokenize(answer, context_mode=True))
                             normalized_answer = ' '.join(atokens).lower()
                             normalized_context_lower = normalized_context.lower()
@@ -163,11 +165,13 @@ def convert(file, outfile, is_test):
                                 except:
                                     bad = True
                             if not bad:
+                                print(' '.join(nctokens[start:end]))
+                                break
                                 output = [str(j['query_id']), j['query_type'], ' '.join(nctokens),' '.join(qtokens),' '.join(nctokens[start:end]), normalized_context, str(start), str(end), normalized_answer]
                     else:
                         output = [str(j['query_id']), j['query_type'], ' '.join(nctokens),' '.join(qtokens)]
                     out.write("%s\n"%'\t'.join(output))
 
-convert('train_v1.1.json.gz', 'train.tsv', False)
+#convert('train_v1.1.json.gz', 'train.tsv', False)
 convert('dev_v1.1.json.gz', 'dev.tsv', False)
-convert('test_public_v1.1.json.gz', 'test.tsv', True)
+#convert('test_public_v1.1.json.gz', 'test.tsv', True)

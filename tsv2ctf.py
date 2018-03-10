@@ -66,14 +66,14 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
 
     if is_test:
         uid, title, context, query = line.split('\t')
-        answer = ''
+        raw_answer = ''
         begin_answer, end_answer = '0', '1'
     else:
         uid, title, context, query, answer, raw_context, begin_answer, end_answer, raw_answer = line.split('\t')
-        answer = answer + ' </s>'
+        raw_answer = raw_answer + ' </s>'
     ctokens = context.split(' ')
     qtokens = query.split(' ')
-    atokens = answer.split(' ')  #need raw answer for training
+    atokens = raw_answer.split(' ')  #need raw answer for training
 
     #replace EMPTY_TOKEN with ''
     ctokens = [t if t != EMPTY_TOKEN else '' for t in ctokens]
@@ -97,7 +97,7 @@ def tsv_iter(line, vocab, chars, is_test=False, misc={}):
     if not is_test and sum(eaidx) == 0:
         raise ValueError('problem with input line:\n%s' % line)
     if is_test and misc.keys():
-        misc['answer'] += [answer]
+        misc['answer'] += [raw_answer]
         misc['rawctx'] += [context]
         misc['ctoken'] += [ctokens]
 
