@@ -250,8 +250,8 @@ def validate_model(i2w, test_data, model, polymath):
     print('validating')
     RL = rouge.Rouge()
     testout = model.outputs[1]  # according to model.shape
-    start_logits = model.outputs[2]   #not finish
-    end_logits = model.outputs[3]       #not finish
+    start_logits = model.outputs[2]  
+    end_logits = model.outputs[3]   
     context = model.outputs[4]
     loss = model.outputs[5]
     root = C.as_composite(loss.owner)
@@ -280,7 +280,8 @@ def validate_model(i2w, test_data, model, polymath):
     stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
     loss_sum = 0
     cnt = 0
-    while True:
+    #while True:
+    while cnt<1000:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
@@ -298,14 +299,13 @@ def validate_model(i2w, test_data, model, polymath):
   #      predict_answer = get_answer(out[context], out[context], span_begin, span_end)
         pred_out = np.asarray(out[context]).reshape(-1).tolist()
         predict_answer = pred_out[span_begin:span_end+1]
-        if cnt ==0:
+        if cnt < 10:
             print(span_begin,span_end)
             print(predict_answer)
             print(format_true_sequences(predict_answer,i2w,polymath))
             cnt+=1
         true_text = format_true_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
         predout_text = format_predict_sequences(np.asarray(out[testout]).reshape(-1), predict_answer , i2w, polymath)
-      #  print(predout_text)
         testloss = out[loss]
         stat += RL.calc_score(predout_text, true_text)
 
@@ -340,7 +340,6 @@ def unique_justseen(iterable):
 def format_true_sequences(sequences, i2w, polymath):
     out =  [] 
     for w in unique_justseen(sequences): 
-        #if w < 131088 and w != 126355:
         if w < polymath.wg_dim and w != polymath.sentence_end_index:
             out.append(i2w[w])
     return " ".join(out)
@@ -351,7 +350,6 @@ def format_predict_sequences(sequences,span_ans , i2w, polymath):
     if len(uni_seq)==1 and uni_seq[0]==polymath.unk_index:
         out.append(i2w[w])
     for w in uni_seq:
-        #if w < 131088 and w != 126355:
         if w < polymath.wg_dim and w != polymath.sentence_end_index:
             out.append(i2w[w])
     return " ".join(out)
