@@ -158,6 +158,10 @@ def convert(file, outfile, is_test):
                                 natokens = normalized_answer.split()
                                 try:
                                     (start, end), (astart, aend), score = smith_waterman(normalized_context_lower.split(), natokens)
+                                    ratio = 0.5 * score / min(len(nctokens), len(natokens))
+                                    
+                                    if ratio < 0.2 or start == end:
+                                        bad = True
                                 except:
                                     bad = True
                             if not bad:

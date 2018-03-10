@@ -15,6 +15,7 @@ model_config = {
     'highway_layers' 	: 2,
     'two_step'          : True,
     'use_cudnn'         : True,
+    'pointer_importance'  : 1,
 }
 
 training_config = {
