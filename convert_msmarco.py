@@ -107,6 +107,7 @@ def smith_waterman(tt,bb):
 
 
 def preprocess(s):
+    s = re.sub(r"(?<=[a-z])(\.)(?=[a-zA-Z])", ". ", s)
     return s.replace("''", '" ').replace("``", '" ')
 
 def tokenize(s, context_mode=False ):
@@ -157,9 +158,6 @@ def convert(file, outfile, is_test):
                                 natokens = normalized_answer.split()
                                 try:
                                     (start, end), (astart, aend), score = smith_waterman(normalized_context_lower.split(), natokens)
-                                    ratio = 0.5 * score / min(len(nctokens), len(natokens))
-                                    if ratio < 0.8:
-                                        bad = True
                                 except:
                                     bad = True
                             if not bad:
