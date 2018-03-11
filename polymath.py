@@ -33,8 +33,9 @@ class PolyMath:
         self.two_step = model_config['two_step']
         self.use_cudnn = model_config['use_cudnn']
         self.pointer_importance = model_config['pointer_importance']
+       # self.pointer_importance = C.learning_parameter_schedule([(12, 0.1), (15, 0.01), (1, 0.001)], epoch_size=100)
         self.use_sparse = False
-        self.a_dim=1
+
         self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+1, sparse_output=self.use_sparse) 
         self.sentence_end_index = self.vocab['</s>']
         self.unk_index = self.vocab['<UNK>']
@@ -348,10 +349,12 @@ class PolyMath:
         pointer_loss = self.pointer_importance*new_loss
         total_loss = loss + pointer_loss
         pointer_loss = print_node(pointer_loss)
-        loss = print_node(loss)
+        pointer_loss = print_node(pointer_loss)
+        print(loss)
+        print(pointer_loss)
         # loss
         #start_loss = seq_loss(start_logits)
         #end_loss = seq_loss(end_logits)
         #paper_loss = start_loss + end_loss
         #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-        return outputs, total_loss
+        return outputs, C.combine([total_loss, pointer_loss])

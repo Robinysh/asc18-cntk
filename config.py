@@ -15,13 +15,13 @@ model_config = {
     'highway_layers' 	: 2,
     'two_step'          : True,
     'use_cudnn'         : True,
-    'pointer_importance': 1,
+    'pointer_importance': 100,
 }
 
 training_config = {
-    'minibatch_size'    : 16,    # in samples when using ctf reader, per worker
+    'minibatch_size'    : 128,    # in samples when using ctf reader, per worker
     'epoch_size'        : 2,   # in sequences, when using ctf reader
- #   'epoch_size'        : 44961,   # in sequences, when using ctf reader
+   # 'epoch_size'        : 44961,   # in sequences, when using ctf reader
     'log_freq'          : 100,     # in minibatchs
     'max_epochs'        : 300,
     'lr'                : 0.005,

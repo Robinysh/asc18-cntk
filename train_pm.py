@@ -126,6 +126,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
                             freq = log_freq,
                             tag = 'Training',
                             log_to_file = log_file,
+                            metric_is_pct=False,
                             rank = C.Communicator.rank(),
                             gen_heartbeat = gen_heartbeat)]
 
@@ -159,6 +160,8 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
 
     model_file = os.path.join(model_path, model_name)
     model = C.combine(z.outputs + loss.outputs) #this is for validation only
+
+    print(model)
 #    print(model)
     epoch_stat = {
         'best_val_err' : 1000,
@@ -181,7 +184,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             #TODO replace with rougel with external script(possibly)
-            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
+        #    val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
             #if epoch_stat['best_val_err'] > val_err:
             #    epoch_stat['best_val_err'] = val_err
             #    epoch_stat['best_since'] = 0
@@ -214,7 +217,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
                     data = mb_source.next_minibatch(minibatch_size*C.Communicator.num_workers(), input_map=input_map, num_data_partitions=C.Communicator.num_workers(), partition_index=C.Communicator.rank())
                 else:
                     data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
-
+                polymath.pointer_importance =  polymath.pointer_importance / 1.3
                 trainer.train_minibatch(data)
                 num_seq += trainer.previous_minibatch_sample_count
                 dummy.eval()
@@ -440,7 +443,7 @@ if __name__=='__main__':
         
     #C.try_set_default_device(C.cpu())
     #C.try_set_default_device(C.gpu(C.Communicator.rank() % 4))
-    C.try_set_default_device(C.gpu(0))
+   # C.try_set_default_device(C.gpu(0))
 
     test_data = args['test']
     test_model = args['model']
