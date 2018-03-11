@@ -15,17 +15,17 @@ model_config = {
     'highway_layers' 	: 2,
     'two_step'          : True,
     'use_cudnn'         : True,
-    'pointer_importance': 2,
+    'pointer_importance': 100,
 
 }
 
 training_config = {
-    'minibatch_size'    : 128,    # in samples when using ctf reader, per worker
-   # 'epoch_size'        : 2,   # in sequences, when using ctf reader
+    'minibatch_size'    : 256,    # in samples when using ctf reader, per worker
+    #'epoch_size'        : 10000,   # in sequences, when using ctf reader
     'epoch_size'        : 44961,   # in sequences, when using ctf reader
     'log_freq'          : 100,     # in minibatchs
     'max_epochs'        : 300,
-    'lr'                : 0.005,
+    'lr'                : 0.002,
     'train_data'        : 'train.ctf',  # or 'train.tsv'
     'val_data'          : 'dev.ctf',
     'val_interval'      : 5,       # interval in epochs to run validation

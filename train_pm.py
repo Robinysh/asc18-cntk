@@ -124,7 +124,6 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                 yield {} # need to generate empty batch for distributed training
 
 def train(i2w, data_path, model_path, log_file, config_file, restore=True, profiling=False, gen_heartbeat=False):
-    restore = True
     polymath = PolyMath(config_file)
     z, loss = polymath.model()
     training_config = importlib.import_module(config_file).training_config
@@ -209,12 +208,13 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=True, profi
             z.save(model_file)
             epoch_stat['best_since'] += 1
             if epoch_stat['best_since'] > training_config['stop_after']:
-                return False
+               return False
         if profiling:
             C.debugging.enable_profiler()
 
         return True
 
+    init_pointer_importance = polymath.pointer_importance
     if train_data_ext == '.ctf':
         mb_source, input_map = create_mb_and_map(loss, train_data_file, polymath)
 
@@ -228,7 +228,6 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=True, profi
                     data = mb_source.next_minibatch(minibatch_size*C.Communicator.num_workers(), input_map=input_map, num_data_partitions=C.Communicator.num_workers(), partition_index=C.Communicator.rank())
                 else:
                     data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
-#                polymath.pointer_importance =  polymath.pointer_importance / 1.3
                 trainer.train_minibatch(data)
                 num_seq += trainer.previous_minibatch_sample_count
                 dummy.eval()
@@ -236,6 +235,9 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=True, profi
                     break
             if not post_epoch_work(epoch_stat):
                 break
+            if polymath.pointer_importance > 0.1*init_pointer_importance:
+                polymath.pointer_importance =  polymath.pointer_importance * 0.9 
+                print('Pointer_importance:', polymath.pointer_importance)
     else:
         if train_data_ext != '.tsv':
             raise Exception("Unsupported format")
@@ -295,7 +297,7 @@ def validate_model(i2w, test_data, model, polymath):
     loss_sum = 0
     cnt = 0
     #while True:
-    while cnt<10:
+    while cnt<1000:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
@@ -324,8 +326,9 @@ def validate_model(i2w, test_data, model, polymath):
  #       predict_answer = pred_out[span_begin:span_end+1]
         if cnt < 10:
  
-            print(predict_answer)
-#            print(format_true_sequences(predict_answer,i2w,polymath))
+            #print(predict_answer)
+            print(format_true_sequences(predict_answer,i2w,polymath))
+            print('\n')
         cnt+=1
         true_text = format_true_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
         predout_text = format_predict_sequences(np.asarray(out[testout]).reshape(-1), predict_answer , i2w, polymath)
@@ -503,6 +506,7 @@ if __name__=='__main__':
     test_data = args['test']
     test_model = args['model']
     
+    print(args['restart'])
     pickle_file = os.path.join(abs_path, 'vocabs.pkl')
     i2w  = get_vocab(pickle_file)
 #    print(i2w)

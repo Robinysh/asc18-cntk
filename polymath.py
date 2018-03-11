@@ -294,7 +294,6 @@ class PolyMath:
         s2smodel = create_model()
       
         model_train = create_model_train(s2smodel)(a_onehot, query_processed, context_processed, start_logits, end_logits)
-        print(model_train)
         model_greed = create_model_greedy(s2smodel)(query_processed, context_processed, start_logits, end_logits)
         model_greedy = C.argmax(model_greed,0)
         context = C.argmax(cw_ph,0)
@@ -310,10 +309,9 @@ class PolyMath:
         def criterion(input, labels):
             # criterion function must drop the <s> from the labels
             #postprocessed_labels = C.sequence.slice(labels, 1, 0) # <s> A B C </s> --> A B C </s>
-            ce = C.cross_entropy_with_softmax(input, labels, name='loss')
+            ce = C.sequence.reduce_sum(C.cross_entropy_with_softmax(input, labels, name='loss'))
 
-            errs = C.classification_error(input, labels, name='NumOfDiffWords')
-            return (ce, errs)
+            return ce
 
         return criterion
 
@@ -355,19 +353,15 @@ class PolyMath:
         #train_logits =  print_node(train_logits)
         #aw = print_node(aw)
         seq_loss_c = self.create_criterion_function()
-        loss = seq_loss_c(train_logits, aw)[0] #TODO Feed onehot answer into it
-#        print(loss)
+        
+        loss = seq_loss_c(train_logits, aw)
+
      #   start_loss = seq_loss(start_logits, ab)
      #   end_loss = seq_loss(end_logits, ae)
         new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
-       
-        pointer_loss = new_loss*self.pointer_importance
-#        print(pointer_loss)
-     
+        pointer_loss = self.pointer_importance*new_loss
+        
         total_loss = C.plus(loss,pointer_loss).output
-
-#        pointer_loss = print_node(pointer_loss)
-#        print(total_loss)
 
         # loss
         #start_loss = seq_loss(start_logits)
