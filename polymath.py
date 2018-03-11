@@ -57,7 +57,7 @@ class PolyMath:
     def embed(self):
         # load glove
         npglove = np.zeros((self.wg_dim, self.hidden_dim), dtype=np.float32)
-        with open(os.path.join(self.abs_path, 'glove.6B.100d.txt'), encoding='utf-8') as f:
+        with open(os.path.join(self.abs_path, 'glove.6B.50d.txt'), encoding='utf-8') as f:
             for line in f:
                 parts = line.split()
                 word = parts[0].lower()
@@ -247,13 +247,14 @@ class PolyMath:
                         att = C.splice(h_att, q_att)
                         x = C.splice(x, att)
                         x, dc = rec_block(dh, dc, x).outputs
-
+          
                         # 0*r is a hack because cntk freaks out when r is not used.
-                        r = U_dense(att) + W_dense(history_embed) + V_dense(x)+ 0*r
+                        r = U_dense(att) + W_dense(history_embed) + V_dense(x) + 0*r 
                         #bug when W_dense is added first, wtf?!
                         #r = W_dense(embed(gx, ngx)) + U_dense(att) + V_dense(x) + 0*r
                         return x, dc, r
                     _, _, r = C.layers.RecurrenceFrom(lstm_with_attention, return_full_state=True)(initial_hstate, initial_cstate, C.Constant(np.zeros(2*self.hidden_dim)),r).outputs
+        
                     r = maxout(r)
                     r = stab_out(r)
                     r = proj_out(r)
@@ -271,6 +272,7 @@ class PolyMath:
                 # The input to the decoder always starts with the special label sequence start token.
                 # Then, use the previous value of the label sequence (for training) or the output (for execution).
                 past_labels = C.layers.Delay(initial_state=self.sentence_start)(labels)
+    
                 return s2smodel(past_labels, q, c, start_logits, end_logits)
             return model_train
 
@@ -292,6 +294,7 @@ class PolyMath:
         s2smodel = create_model()
       
         model_train = create_model_train(s2smodel)(a_onehot, query_processed, context_processed, start_logits, end_logits)
+        print(model_train)
         model_greed = create_model_greedy(s2smodel)(query_processed, context_processed, start_logits, end_logits)
         model_greedy = C.argmax(model_greed,0)
         context = C.argmax(cw_ph,0)
@@ -333,7 +336,7 @@ class PolyMath:
 
         #embed layer
         embed = self.embed()
-
+        
         #input layer
         c_processed, q_processed = self.input_layer(embed, cgw,cnw,cc,qgw,qnw,qc).outputs
         
@@ -351,18 +354,20 @@ class PolyMath:
         #test_output = print_node(test_output)        
         #train_logits =  print_node(train_logits)
         #aw = print_node(aw)
-        seq_loss = self.create_criterion_function()
-        loss = seq_loss(train_logits, aw)[0] #TODO Feed onehot answer into it
-
-        start_loss = seq_loss(start_logits, ab)
-        end_loss = seq_loss(end_logits, ae)
+        seq_loss_c = self.create_criterion_function()
+        loss = seq_loss_c(train_logits, aw)[0] #TODO Feed onehot answer into it
+#        print(loss)
+     #   start_loss = seq_loss(start_logits, ab)
+     #   end_loss = seq_loss(end_logits, ae)
         new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
- 
-        pointer_loss = self.pointer_importance*new_loss
-        total_loss = loss + pointer_loss
-        pointer_loss = print_node(pointer_loss)
-        pointer_loss = print_node(pointer_loss)
+       
+        pointer_loss = new_loss*self.pointer_importance
+#        print(pointer_loss)
+     
+        total_loss = C.plus(loss,pointer_loss).output
 
+#        pointer_loss = print_node(pointer_loss)
+#        print(total_loss)
 
         # loss
         #start_loss = seq_loss(start_logits)

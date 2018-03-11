@@ -16,6 +16,14 @@ import rouge
 
 model_name = "pm.model"
 
+#from cntk.internal.utils import _py_dict_to_cntk_dict
+
+#def get_checkpoint_state(self):
+#    return _py_dict_to_cntk_dict({})
+
+#def restore_from_checkpoint(self, checkpoint):
+ #   pass
+
 def argument_by_name(func, name):
     found = [arg for arg in func.arguments if arg.name == name]
 
@@ -66,7 +74,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
         batch_count = 0
         while not(eof and (batch_count % num_workers) == 0):
             batch_count += 1
-            batch={'cwids':[], 'qwids':[], 'awids':[], 'baidx':[], 'eaidx':[], 'ccids':[], 'qcids':[], 'acids':[]}
+            batch={'cwids':[], 'qwids':[], 'awids':[], 'baidx':[], 'eaidx':[], 'ccids':[], 'qcids':[]}
 
             while not eof and len(batch['cwids']) < seqs:
                 line = f.readline()
@@ -78,7 +86,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                     import re
                     misc['uid'].append(re.match('^([^\t]*)', line).groups()[0])
 
-                ctokens, qtokens, atokens, cwids, qwids, awids, baidx, eaidx, ccids, qcids, acids = tsv2ctf.tsv_iter(line, polymath.vocab, polymath.chars, is_test, misc)
+                ctokens, qtokens, atokens, cwids, qwids, awids, baidx, eaidx, ccids, qcids  = tsv2ctf.tsv_iter(line, polymath.vocab, polymath.chars, is_test, misc)
 
                 batch['cwids'].append(cwids)
                 batch['qwids'].append(qwids)
@@ -87,7 +95,7 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                 batch['eaidx'].append(eaidx)
                 batch['ccids'].append(ccids)
                 batch['qcids'].append(qcids)
-                batch['acids'].append(acids)
+#                batch['acids'].append(acids)
 
             if len(batch['cwids']) > 0:
                 context_g_words  = C.Value.one_hot([[C.Value.ONE_HOT_SKIP if i >= polymath.wg_dim else i for i in cwids] for cwids in batch['cwids']], polymath.wg_dim)
@@ -109,12 +117,14 @@ def create_tsv_reader(func, tsv_file, polymath, seqs, num_workers, is_test=False
                         argument_by_name(func, 'aw' ): answer_words,
                         argument_by_name(func, 'cc' ): context_chars,
                         argument_by_name(func, 'qc' ): query_chars,
-                        argument_by_name(func, 'ab' ): answer_begin,
-                        argument_by_name(func, 'ae' ): answer_end }
+       #                 argument_by_name(func, 'ab' ): answer_begin,
+      #                  argument_by_name(func, 'ae' ): answer_end 
+                       }
             else:
                 yield {} # need to generate empty batch for distributed training
 
-def train(i2w, data_path, model_path, log_file, config_file, restore=False, profiling=False, gen_heartbeat=False):
+def train(i2w, data_path, model_path, log_file, config_file, restore=True, profiling=False, gen_heartbeat=False):
+    restore = True
     polymath = PolyMath(config_file)
     z, loss = polymath.model()
     training_config = importlib.import_module(config_file).training_config
@@ -161,15 +171,16 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
     model_file = os.path.join(model_path, model_name)
     model = C.combine(z.outputs + loss.outputs) #this is for validation only
 
-    print(model)
+
 #    print(model)
     epoch_stat = {
         'best_val_err' : 1000,
         'best_since'   : 0,
         'val_since'    : 0}
+    print(restore,os.path.isfile(model_file))
+#    if restore and os.path.isfile(model_file):
     if restore and os.path.isfile(model_file):
-  #  if restore and os.path.isfile(model_file):
-        trainer.restore_from_checkpoint(model_file)
+        z.restore(model_file)
         #after restore always re-evaluate
         #TODO replace with rougel with external script(possibly)
         epoch_stat['best_val_err'] = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
@@ -195,7 +206,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             #    epoch_stat['best_since'] += 1
             #    if epoch_stat['best_since'] > training_config['stop_after']:
             #        return False
-            trainer.save_checkpoint(model_file)
+            z.save(model_file)
             epoch_stat['best_since'] += 1
             if epoch_stat['best_since'] > training_config['stop_after']:
                 return False
@@ -284,7 +295,7 @@ def validate_model(i2w, test_data, model, polymath):
     loss_sum = 0
     cnt = 0
     #while True:
-    while cnt<1000:
+    while cnt<10:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
@@ -314,8 +325,8 @@ def validate_model(i2w, test_data, model, polymath):
         if cnt < 10:
  
             print(predict_answer)
-            print(format_true_sequences(predict_answer,i2w,polymath))
-            cnt+=1
+#            print(format_true_sequences(predict_answer,i2w,polymath))
+        cnt+=1
         true_text = format_true_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
         predout_text = format_predict_sequences(np.asarray(out[testout]).reshape(-1), predict_answer , i2w, polymath)
         testloss = out[loss]
@@ -366,6 +377,16 @@ def format_predict_sequences(sequences,span_ans , i2w, polymath):
             out.append(i2w[w])
     return " ".join(out)
 
+def format_output_sequences(sequences,span_ans , i2w, polymath):
+    out =  []
+    uni_seq = unique_justseen(sequences)
+    if len(uni_seq)==1 and uni_seq[0]==polymath.unk_index:
+        return  span_ans
+    for w in uni_seq:
+        if w < polymath.wg_dim and w != polymath.sentence_end_index:
+            out.append(i2w[w])
+    return " ".join(out)
+
 
 # map from token to char offset
 def w2c_map(s, words):
@@ -389,19 +410,30 @@ def get_answer(raw_text, tokens, start, end):
         import pdb
         pdb.set_trace()
 
+
+
+
 def test(i2w ,test_data, model_path, model_file, config_file):
     #C.try_set_default_device(C.cpu())
     polymath = PolyMath(config_file)
     print(test_data, model_path, model_file, model_name)
-    model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
+    print(os.path.join(model_path, model_file))
+    model = C.Function.load(os.path.join(model_path, model_file if model_file else model_name))
     print(model)
     output       = model.outputs[1]
 #    loss         = model.outputs[5]
     start_logits = model.outputs[2]
     end_logits = model.outputs[3]
     context = model.outputs[4]
-    loss = model.outputs[5]
-    root = C.as_composite(loss.owner)
+  #  loss = model.outputs[5]
+    root = C.as_composite(output.owner)
+
+    begin_prediction = C.sequence.input_variable(1, sequence_axis=start_logits.dynamic_axes[1], needs_gradient=True)
+    end_prediction = C.sequence.input_variable(1, sequence_axis=end_logits.dynamic_axes[1], needs_gradient=True)
+    predicted_span = C.layers.Recurrence(C.plus)(begin_prediction - C.sequence.past_value(end_prediction))
+ 
+    best_span_score = symbolic_best_span(begin_prediction, end_prediction)
+
 
     batch_size = 1 # in sequences
     misc = {'rawctx':[], 'ctoken':[], 'answer':[], 'uid':[]}
@@ -409,11 +441,29 @@ def test(i2w ,test_data, model_path, model_file, config_file):
     results = {}
     with open('{}_out.json'.format(model_file), 'w', encoding='utf-8') as json_output:
         for data in tsv_reader:
-            out = model.eval(data, outputs=[output,loss], as_numpy=False)
+            out = model.eval(data, outputs=[output, start_logits,end_logits, context], as_numpy=False)
+            g = best_span_score.grad({begin_prediction:out[start_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)           
+            other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
+            span = predicted_span.eval((other_input_map))
             for seq, (raw_text, ctokens, answer, uid) in enumerate(zip(misc['rawctx'], misc['ctoken'], misc['answer'], misc['uid'])):
-                predict_answer = format_sequences(np.asarray(out[output].as_sequences()).reshape(-1), i2w, polymath)
+     #           g = best_span_score.grad({begin_prediction:out[start_logits], end_prediction:out[end_logits]}, wrt=[begin_prediction,end_prediction], as_numpy=False)
+
+      #          other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
+       #         span = predicted_span.eval((other_input_map))
+                seq_where = np.argwhere(span[seq])[:,0]
+                span_begin = np.min(seq_where)
+                span_end = np.max(seq_where)
+                predict_answer = get_answer(raw_text, ctokens, span_begin, span_end)
+         #       span_out = np.asarray(span).reshape(-1).tolist()
+         #       context_o = np.asarray(out[context]).reshape(-1).tolist()
+         #       predict_answer = []
+         #       for i in range(len(span_out)):
+         #           if(span_out[i]==1):
+         #               predict_answer.append(context_o[i])
+                print(predict_answer)
+                final_answer = format_output_sequences(np.asarray(out[output].as_sequences()).reshape(-1),predict_answer, i2w, polymath)
                 results['query_id'] = int(uid)
-                results['answers'] = [predict_answer]
+                results['answers'] = [final_answer]
                 print(results)
                 json.dump(results, json_output)
                 json_output.write("\n")
