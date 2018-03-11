@@ -35,7 +35,6 @@ class PolyMath:
         self.pointer_importance = model_config['pointer_importance']
        # self.pointer_importance = C.learning_parameter_schedule([(12, 0.1), (15, 0.01), (1, 0.001)], epoch_size=100)
         self.use_sparse = False
-
         self.sentence_start = C.one_hot(self.vocab_size, self.vocab_size+1, sparse_output=self.use_sparse) 
         self.sentence_end_index = self.vocab['</s>']
         self.unk_index = self.vocab['<UNK>']
@@ -66,12 +65,11 @@ class PolyMath:
                     npglove[self.vocab[word],:] = np.asarray([float(p) for p in parts[1:]])
         glove = C.constant(npglove)
         nonglove = C.parameter(shape=(self.vocab_size - self.wg_dim, self.hidden_dim), init=C.glorot_uniform(), name='TrainableE')
-        
         def func(wg, wn):
             return C.times(wg, glove) + C.times(wn, nonglove)
         return func
 
-    def input_layer(self,cgw,cnw,cc,qgw,qnw,qc):
+    def input_layer(self, embed, cgw,cnw,cc,qgw,qnw,qc):
         cgw_ph = C.placeholder()
         cnw_ph = C.placeholder()
         cc_ph  = C.placeholder()
@@ -88,7 +86,7 @@ class PolyMath:
         # todo GlobalPooling/reduce_max should have a keepdims default to False embedded = C.splice(
         embedded = C.splice(
             C.reshape(self.charcnn(input_chars), self.convs),
-            self.embed()(input_glove_words, input_nonglove_words), name='splice_embed')
+            embed(input_glove_words, input_nonglove_words), name='splice_embed')
         highway = HighwayNetwork(dim=2*self.hidden_dim, highway_layers=self.highway_layers)(embedded)
         highway_drop = C.layers.Dropout(self.dropout)(highway)
         processed = OptimizedRnnStack(self.hidden_dim, bidirectional=True, use_cudnn=self.use_cudnn, name='input_rnn')(highway_drop)
@@ -165,7 +163,7 @@ class PolyMath:
             'modeling_layer',
             'modeling_layer')
 
-    def output_layer(self, attention_context, model_context, aw, q_processed, c_processed,cw):
+    def output_layer(self, embed, attention_context, model_context, aw, q_processed, c_processed,cw):
         cw_ph=C.placeholder()
         att_context = C.placeholder(shape=(8*self.hidden_dim,))
         query_processed = C.placeholder(shape=(2*self.hidden_dim,))
@@ -192,15 +190,11 @@ class PolyMath:
                 LastRecurrence = C.layers.Recurrence
                 encode = C.layers.Sequential([
                     C.layers.Stabilizer(),
-                    C.layers.For(range(self.num_layers-1), lambda:
-                        C.layers.Recurrence(C.layers.LSTM(2*self.hidden_dim))),
                     OptimizedRnnStack(self.hidden_dim, return_full_state=True),
                 ])
 
                 encode_c = C.layers.Sequential([
                     C.layers.Stabilizer(),
-                    C.layers.For(range(self.num_layers-1), lambda:
-                        C.layers.Recurrence(C.layers.LSTM(2*self.hidden_dim+2))),
                     OptimizedRnnStack(self.hidden_dim, return_full_state=True),
                 ])
             
@@ -219,6 +213,10 @@ class PolyMath:
                                                               name='attention_model') # :: (h_enc*, h_dec) -> (h_dec augmented)
                 hstate_dense = C.layers.Dense(self.hidden_dim, activation=C.tanh, input_rank=1)
                 cstate_dense = C.layers.Dense(self.hidden_dim, activation=C.tanh, input_rank=1)
+                W_dense = C.layers.Dense(2*self.hidden_dim, input_rank=1)
+                U_dense = C.layers.Dense(2*self.hidden_dim, input_rank=1)
+                V_dense = C.layers.Dense(2*self.hidden_dim, input_rank=1)
+                maxout  = C.layers.MaxPooling((2,), strides=2)
                 # layer function
                 @C.Function
                 def decode(history, q, c, start_logits, end_logits):
@@ -234,21 +232,32 @@ class PolyMath:
                     initial_hstate = hstate_dense(C.splice(q_last_h, c_last_h))
                     initial_cstate = cstate_dense(C.splice(q_last_c, c_last_c))
 
-                    for i in range(self.num_layers):
-                        rec_block = rec_blocks[i]   # LSTM(hidden_dim)  # :: (dh, dc, x) -> (h, c)
-                        if i == 0:
-                            @C.Function
-                            def lstm_with_attention(dh, dc, x):
-                                h_att = attention_model(c.outputs[0], dh)
-                                q_att = attention_model(q.outputs[0], dh)
-                                att = C.splice(h_att, q_att)
-                                x = C.splice(x, att)
-                                return rec_block(dh, dc, x)
-                            r = C.layers.RecurrenceFrom(lstm_with_attention)(initial_hstate, initial_cstate, r)
-                        else:
-                            r = C.layers.RecurrenceFrom(rec_block)(initial_hstate, initial_cstate, r)
+                    rec_block = rec_blocks[0]   # LSTM(hidden_dim)  # :: (dh, dc, x) -> (h, c)
+                    
+                    @C.Function
+                    def find_embed(x):
+                        gx, ngx = C.slice(x, 0, 0, self.wg_dim), C.slice(x, 0, self.wg_dim, self.vocab_size)
+                        return embed(gx, ngx) 
+
+                    @C.Function
+                    def lstm_with_attention(dh, dc, r, x):
+                        history_embed = find_embed(x)
+                        h_att = attention_model(c.outputs[0], dh)
+                        q_att = attention_model(q.outputs[0], dh)
+                        att = C.splice(h_att, q_att)
+                        x = C.splice(x, att)
+                        x, dc = rec_block(dh, dc, x).outputs
+
+                        # 0*r is a hack because cntk freaks out when r is not used.
+                        r = U_dense(att) + W_dense(history_embed) + V_dense(x)+ 0*r
+                        #bug when W_dense is added first, wtf?!
+                        #r = W_dense(embed(gx, ngx)) + U_dense(att) + V_dense(x) + 0*r
+                        return x, dc, r
+                    _, _, r = C.layers.RecurrenceFrom(lstm_with_attention, return_full_state=True)(initial_hstate, initial_cstate, C.Constant(np.zeros(2*self.hidden_dim)),r).outputs
+                    r = maxout(r)
                     r = stab_out(r)
                     r = proj_out(r)
+                    #r = C.softmax(r)
                     r = C.layers.Label('out_proj_out')(r)
                     return r
             return decode
@@ -322,8 +331,11 @@ class PolyMath:
         ae = C.input_variable(self.a_dim, dynamic_axes=[b,c], name='ae')
 #        ac = C.input_variable((1,self.word_size), dynamic_axes=[b,a], name='ac')
 
+        #embed layer
+        embed = self.embed()
+
         #input layer
-        c_processed, q_processed = self.input_layer(cgw,cnw,cc,qgw,qnw,qc).outputs
+        c_processed, q_processed = self.input_layer(embed, cgw,cnw,cc,qgw,qnw,qc).outputs
         
         # attention layer
         att_context = self.attention_layer(c_processed, q_processed)
@@ -332,7 +344,7 @@ class PolyMath:
         mod_context = self.modeling_layer(att_context) 
      
         # output layer
-        outputs = self.output_layer(att_context, mod_context, aw, q_processed, c_processed,cw)
+        outputs = self.output_layer(embed, att_context, mod_context, aw, q_processed, c_processed,cw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
         start_logits, end_logits = outputs[2], outputs[3] 
         #test_output, train_logits = self.output_layer(mod_context, aw)
@@ -350,8 +362,8 @@ class PolyMath:
         total_loss = loss + pointer_loss
         pointer_loss = print_node(pointer_loss)
         pointer_loss = print_node(pointer_loss)
-        print(loss)
-        print(pointer_loss)
+
+
         # loss
         #start_loss = seq_loss(start_logits)
         #end_loss = seq_loss(end_logits)

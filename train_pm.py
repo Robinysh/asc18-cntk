@@ -184,7 +184,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
             for p in trainer.model.parameters:
                 p.value = ema[p.uid].value
             #TODO replace with rougel with external script(possibly)
-        #    val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
+            val_err = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
             #if epoch_stat['best_val_err'] > val_err:
             #    epoch_stat['best_val_err'] = val_err
             #    epoch_stat['best_since'] = 0
@@ -217,7 +217,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=False, prof
                     data = mb_source.next_minibatch(minibatch_size*C.Communicator.num_workers(), input_map=input_map, num_data_partitions=C.Communicator.num_workers(), partition_index=C.Communicator.rank())
                 else:
                     data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
-                polymath.pointer_importance =  polymath.pointer_importance / 1.3
+#                polymath.pointer_importance =  polymath.pointer_importance / 1.3
                 trainer.train_minibatch(data)
                 num_seq += trainer.previous_minibatch_sample_count
                 dummy.eval()
@@ -253,8 +253,8 @@ def validate_model(i2w, test_data, model, polymath):
     print('validating')
     RL = rouge.Rouge()
     testout = model.outputs[1]  # according to model.shape
-    start_logits = model.outputs[2]   #not finish
-    end_logits = model.outputs[3]       #not finish
+    start_logits = model.outputs[2]  
+    end_logits = model.outputs[3]   
     context = model.outputs[4]
     loss = model.outputs[5]
     root = C.as_composite(loss.owner)
@@ -283,7 +283,8 @@ def validate_model(i2w, test_data, model, polymath):
     stat = np.array([0,0,0,0,0,0], dtype = np.dtype('float64'))
     loss_sum = 0
     cnt = 0
-    while True:
+    #while True:
+    while cnt<1000:
         data = mb_source.next_minibatch(minibatch_size, input_map=input_map)
         if not data or not (onehot in data) or data[onehot].num_sequences == 0:
             break
@@ -297,10 +298,10 @@ def validate_model(i2w, test_data, model, polymath):
         other_input_map = {begin_prediction: g[begin_prediction], end_prediction: g[end_prediction]}
         span = predicted_span.eval((other_input_map))
 #        print(span)
-   #     seq_where = np.argwhere(span)[:,0]
-   #     span_begin = np.min(seq_where)
-   #     span_end = np.max(seq_where)
-  #      predict_answer = get_answer(out[context], out[context], span_begin, span_end)
+
+
+
+
         span_out = np.asarray(span).reshape(-1).tolist()
         context_o = np.asarray(out[context]).reshape(-1).tolist()
         predict_answer = []
@@ -308,15 +309,15 @@ def validate_model(i2w, test_data, model, polymath):
             if(span_out[i]==1):
                 predict_answer.append(context_o[i])
 
-#        print(predict_answer)
-        if cnt ==0:
-   
+ #       pred_out = np.asarray(out[context]).reshape(-1).tolist()
+ #       predict_answer = pred_out[span_begin:span_end+1]
+        if cnt < 10:
+ 
             print(predict_answer)
             print(format_true_sequences(predict_answer,i2w,polymath))
             cnt+=1
         true_text = format_true_sequences(np.asarray(true).reshape(-1).tolist(),i2w, polymath)
         predout_text = format_predict_sequences(np.asarray(out[testout]).reshape(-1), predict_answer , i2w, polymath)
-      #  print(predout_text)
         testloss = out[loss]
         stat += RL.calc_score(predout_text, true_text)
 
@@ -351,7 +352,6 @@ def unique_justseen(iterable):
 def format_true_sequences(sequences, i2w, polymath):
     out =  [] 
     for w in unique_justseen(sequences): 
-        #if w < 131088 and w != 126355:
         if w < polymath.wg_dim and w != polymath.sentence_end_index:
             out.append(i2w[w])
     return " ".join(out)
@@ -362,7 +362,6 @@ def format_predict_sequences(sequences,span_ans , i2w, polymath):
     if len(uni_seq)==1 and uni_seq[0]==polymath.unk_index:
         uni_seq=span_ans
     for w in uni_seq:
-        #if w < 131088 and w != 126355:
         if w < polymath.wg_dim and w != polymath.sentence_end_index:
             out.append(i2w[w])
     return " ".join(out)
@@ -393,9 +392,15 @@ def get_answer(raw_text, tokens, start, end):
 def test(i2w ,test_data, model_path, model_file, config_file):
     #C.try_set_default_device(C.cpu())
     polymath = PolyMath(config_file)
+    print(test_data, model_path, model_file, model_name)
     model = C.load_model(os.path.join(model_path, model_file if model_file else model_name))
-    output       = model.outputs[0]
-    loss         = model.outputs[1]
+    print(model)
+    output       = model.outputs[1]
+#    loss         = model.outputs[5]
+    start_logits = model.outputs[2]
+    end_logits = model.outputs[3]
+    context = model.outputs[4]
+    loss = model.outputs[5]
     root = C.as_composite(loss.owner)
 
     batch_size = 1 # in sequences
