@@ -11,6 +11,7 @@ import importlib
 import time
 import json
 import pickle
+from nltk import ngrams
 
 import rouge
 
@@ -181,7 +182,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=True, profi
         z.restore(model_file)
         #after restore always re-evaluate
         #TODO replace with rougel with external script(possibly)
-        epoch_stat['best_val_err'] = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
+        #epoch_stat['best_val_err'] = validate_model(i2w, os.path.join(data_path, training_config['val_data']), model, polymath)
 
     def post_epoch_work(epoch_stat):
         trainer.summarize_training_progress()
@@ -358,10 +359,18 @@ def get_vocab(path):
     i2w = { i:w for i,w in enumerate(vocab) }
     return i2w
 
-def unique_justseen(iterable):
+def unique_justseen(sentence):
     #removes adjacent duplicates
-    #[1,2,2,2,3] -> [1,2,3]
-    return list(map(next, map(itemgetter(1), groupby(iterable))))
+    #[1,2,3,1,2,3] -> [1,2,3]
+    
+    sentence = list(sentence)
+    for n in range(1,min(7, len(sentence))):
+        grams = list(ngrams(sentence, n))
+        for i in range(len(grams)-n,0,-1):
+            if grams[i] == grams[i-n]:
+                for j in range(n-1,-1,-1):
+                    del sentence[i+j]
+    return sentence
 
 def format_true_sequences(sequences, i2w, polymath):
     out =  [] 

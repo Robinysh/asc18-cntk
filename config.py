@@ -11,11 +11,11 @@ model_config = {
     'attention_dim'     : 2,
     'char_convs'     	: 50,
     'char_emb_dim'   	: 8,
-    'dropout'        	: 0.2,
+    'dropout'        	: 0.6,
     'highway_layers' 	: 2,
     'two_step'          : True,
     'use_cudnn'         : True,
-    'pointer_importance': 60,
+    'pointer_importance': 10,
 
 }
 
@@ -25,7 +25,7 @@ training_config = {
     'epoch_size'        : 44961,   # in sequences, when using ctf reader
     'log_freq'          : 100,     # in minibatchs
     'max_epochs'        : 300,
-    'lr'                : 0.02,
+    'lr'                : 0.005,
     'train_data'        : 'train.ctf',  # or 'train.tsv'
     'val_data'          : 'dev.ctf',
     'val_interval'      : 5,       # interval in epochs to run validation
