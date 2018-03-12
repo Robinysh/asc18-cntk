@@ -368,7 +368,7 @@ def unique_justseen(sentence):
         while i > 0:
             if grams[i] == grams[i-n]:
                 sentence = np.delete(sentence, range(i, i+n))
-                i-=1
+                i-= n-1
             i-=1
     return sentence
 
