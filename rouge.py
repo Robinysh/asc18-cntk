@@ -66,7 +66,7 @@ class Rouge():
             score = ((1 + self.beta**2)*prec_max*rec_max)/float(rec_max + self.beta**2*prec_max)
         else:
             score = 0.0
-        return score
+        return np.array([score, lcs, len(token_c),len(token_r), prec_max,rec_max], dtype = np.dtype('Float64'))
 
     def compute_score(self, gts, res):
         """
