@@ -362,15 +362,12 @@ def get_vocab(path):
 def unique_justseen(sentence):
     #removes adjacent duplicates
     #[1,2,3,1,2,3] -> [1,2,3]
-    
-    sentence = list(sentence)
     for n in range(1,min(7, len(sentence))):
         grams = list(ngrams(sentence, n))
         for i in range(len(grams)-n,0,-1):
             if grams[i] == grams[i-n]:
-                for j in range(n-1,-1,-1):
-                    del sentence[i+j]
-    return sentence
+                sentence = np.delete(sentence, range(i,i+n))
+    return np.array(sentence)
 
 def format_true_sequences(sequences, i2w, polymath):
     out =  [] 
