@@ -367,7 +367,7 @@ def unique_justseen(sentence):
         for i in range(len(grams)-n,0,-1):
             if grams[i] == grams[i-n]:
                 sentence = np.delete(sentence, range(i,i+n))
-    return np.array(sentence)
+    return sentence
 
 def format_true_sequences(sequences, i2w, polymath):
     out =  [] 
