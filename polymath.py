@@ -304,12 +304,12 @@ class PolyMath:
             'attention_layer',
             'attention_layer')
 
-    def create_criterion_function(self):
+    def create_criterion_function(self, a):
         @C.Function
         def criterion(input, labels):
             # criterion function must drop the <s> from the labels
             #postprocessed_labels = C.sequence.slice(labels, 1, 0) # <s> A B C </s> --> A B C </s>
-            ce = C.sequence.reduce_sum(C.cross_entropy_with_softmax(input, labels, name='loss'))
+            ce = C.cross_entropy_with_softmax(input, labels, name='loss')
 
             return ce
 
@@ -348,24 +348,15 @@ class PolyMath:
         outputs = self.output_layer(embed, att_context, mod_context, aw, q_processed, c_processed,cw)
         train_logits, test_output = outputs[0], outputs[1] #workaround for bug
         start_logits, end_logits = outputs[2], outputs[3] 
-        #test_output, train_logits = self.output_layer(mod_context, aw)
-        #test_output = print_node(test_output)        
-        #train_logits =  print_node(train_logits)
-        #aw = print_node(aw)
-        seq_loss_c = self.create_criterion_function()
-        
+
+        seq_loss_c = self.create_criterion_function(a)
         loss = seq_loss_c(train_logits, aw)
 
-     #   start_loss = seq_loss(start_logits, ab)
-     #   end_loss = seq_loss(end_logits, ae)
+        #please tell me there is a better way to do this
+        sequence_length = C.sequence.reduce_sum(loss*0+1)
         new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
         pointer_loss = self.pointer_importance*new_loss
         
-        total_loss = C.plus(loss,pointer_loss).output
+        total_loss = C.plus(loss,pointer_loss/sequence_length).output
 
-        # loss
-        #start_loss = seq_loss(start_logits)
-        #end_loss = seq_loss(end_logits)
-        #paper_loss = start_loss + end_loss
-        #new_loss = all_spans_loss(start_logits, ab, end_logits, ae)
         return outputs, C.combine([total_loss, pointer_loss])

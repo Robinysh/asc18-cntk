@@ -171,7 +171,6 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=True, profi
     model = C.combine(z.outputs + loss.outputs) #this is for validation only
 
 
-#    print(model)
     epoch_stat = {
         'best_val_err' : 1000,
         'best_since'   : 0,
@@ -235,6 +234,7 @@ def train(i2w, data_path, model_path, log_file, config_file, restore=True, profi
                     break
             if not post_epoch_work(epoch_stat):
                 break
+            print('Before Pointer_importance:', polymath.pointer_importance)
             if polymath.pointer_importance > 0.1*init_pointer_importance:
                 polymath.pointer_importance =  polymath.pointer_importance * 0.9 
                 print('Pointer_importance:', polymath.pointer_importance)
